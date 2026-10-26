@@ -1,0 +1,8 @@
+/target/
+/data/*
+!/data/.gitkeep
+/sandbox/*
+!/sandbox/.gitkeep
+*.db
+*.db-shm
+*.db-wal

@@ -1,0 +1,44 @@
+version = 1
+
+[settings]
+# Existing files are never overwritten. Other values: "rename-with-suffix", "error".
+collision_policy = "skip"
+
+[[rules]]
+id = "documents"
+enabled = true
+priority = 10
+destination = "/files/sorted/documents"
+
+[rules.match]
+extensions = ["pdf", "docx", "odt"]
+
+[[rules]]
+id = "invoices"
+enabled = true
+priority = 100
+destination = "/files/sorted/invoices"
+
+[rules.match]
+# Matching is case-insensitive by default.
+filename_regex = ".*invoice.*\\.pdf$"
+
+[[rules]]
+id = "text-reports"
+enabled = true
+priority = 20
+destination = "/files/sorted/reports"
+
+[rules.match]
+# Values inside a group are ORed. Groups are combined with this operator.
+operator = "all"
+filename_globs = ["report-*", "summary-*"]
+extensions = ["txt", "md"]
+
+[[directories]]
+id = "downloads"
+path = "/files/incoming"
+enabled = true
+mode = "once"
+recursive = false
+rules = ["documents", "invoices", "text-reports"]

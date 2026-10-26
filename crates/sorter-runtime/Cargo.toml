@@ -1,0 +1,22 @@
+[package]
+name = "sorter-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+sorter-core = { path = "../sorter-core" }
+sorter-fs = { path = "../sorter-fs" }
+sorter-storage = { path = "../sorter-storage" }
+thiserror.workspace = true
+tracing.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
+

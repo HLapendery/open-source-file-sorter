@@ -1,0 +1,33 @@
+version = 1
+
+[settings]
+collision_policy = "skip"
+
+[[rules]]
+id = "documents"
+enabled = true
+priority = 10
+destination = "/files/sorted/documents"
+
+[rules.match]
+extensions = ["pdf", "docx", "odt"]
+case_sensitive = false
+
+[[rules]]
+id = "invoices"
+enabled = true
+priority = 100
+destination = "/files/sorted/invoices"
+
+[rules.match]
+filename_regex = ".*invoice.*\\.pdf$"
+case_sensitive = false
+
+[[directories]]
+id = "downloads"
+path = "/files/incoming"
+enabled = true
+mode = "once"
+recursive = false
+rules = ["documents", "invoices"]
+
