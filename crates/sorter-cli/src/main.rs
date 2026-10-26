@@ -2,7 +2,10 @@ use anyhow::{anyhow, bail, Result};
 use clap::{Args, Parser, Subcommand};
 use sorter_core::{MatchSpec, Rule};
 use sorter_fs::CollisionPolicy;
-use sorter_runtime::{run_once, OneShotOptions, RunReport};
+use sorter_runtime::{
+    recover_operations, run_once, OneShotOptions, RecoveryOptions, RecoveryReport, RecoveryStatus,
+    RunReport,
+};
 use sorter_storage::{
     Config, DirectoryConfig, ExecutionMode, HistoryStore, ScheduleTimezone, Settings,
     CURRENT_CONFIG_VERSION,
@@ -70,6 +73,18 @@ enum Command {
     History {
         #[arg(long, default_value_t = 50)]
         limit: u32,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect interrupted operations or apply only unambiguous recovery.
+    Recover {
+        /// Perform safe recovery actions. Without this flag, only report them.
+        #[arg(long)]
+        apply: bool,
+        /// Restrict recovery to one operation id.
+        #[arg(long)]
+        operation: Option<i64>,
+        /// Emit one JSON document.
         #[arg(long)]
         json: bool,
     },
@@ -175,7 +190,66 @@ fn execute(cli: Cli) -> Result<ExitCode> {
         Command::Rules { command } => rules_command(&cli.config, command),
         Command::Directories { command } => directories_command(&cli.config, &command),
         Command::History { limit, json } => history_command(&cli.database, limit, json),
+        Command::Recover {
+            apply,
+            operation,
+            json,
+        } => recover_command(&cli.database, apply, operation, json),
     }
+}
+
+fn recover_command(
+    database: &Path,
+    apply: bool,
+    operation_id: Option<i64>,
+    json: bool,
+) -> Result<ExitCode> {
+    let history = HistoryStore::open(database)?;
+    let report = recover_operations(
+        &history,
+        RecoveryOptions {
+            apply,
+            operation_id,
+        },
+    )?;
+    print_recovery_report(&report, json)?;
+    if report.needs_review > 0 {
+        Ok(ExitCode::from(4))
+    } else {
+        Ok(ExitCode::SUCCESS)
+    }
+}
+
+fn print_recovery_report(report: &RecoveryReport, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+        return Ok(());
+    }
+    for item in &report.items {
+        let action = match item.status {
+            RecoveryStatus::WouldComplete => "WOULD COMPLETE",
+            RecoveryStatus::Completed => "COMPLETED",
+            RecoveryStatus::WouldCloseWithoutChanges => "WOULD CLOSE",
+            RecoveryStatus::ClosedWithoutChanges => "CLOSED",
+            RecoveryStatus::NeedsReview => "REVIEW",
+        };
+        println!(
+            "{action}\t{}\t{} -> {}\t{}",
+            item.operation_id,
+            item.source.display(),
+            item.destination.display(),
+            item.message
+        );
+    }
+    println!(
+        "inspected={} completed={} closed={} needs_review={} apply={}",
+        report.inspected,
+        report.completed,
+        report.closed_without_changes,
+        report.needs_review,
+        report.apply
+    );
+    Ok(())
 }
 
 fn init_config(path: &Path, force: bool) -> Result<ExitCode> {

@@ -2,8 +2,12 @@
 
 use serde::Serialize;
 use sorter_core::{MatchEngine, PlannedMove, Rule};
-use sorter_fs::{execute_move, CollisionPolicy, MoveOutcome};
-use sorter_storage::{HistoryStore, OperationState};
+use sorter_fs::{
+    execute_move_with_hooks, files_equal, publish_verified_temporary, remove_verified_source,
+    same_file_identity, CollisionPolicy, FsError, MoveOutcome, TransferEvent, TransferHooks,
+    TransferKind,
+};
+use sorter_storage::{HistoryStore, OperationRecord, OperationState};
 use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -32,6 +36,8 @@ pub enum RuntimeError {
     Core(#[from] sorter_core::CoreError),
     #[error(transparent)]
     Storage(#[from] sorter_storage::StorageError),
+    #[error(transparent)]
+    Filesystem(#[from] FsError),
 }
 
 #[derive(Debug, Serialize)]
@@ -139,15 +145,34 @@ fn execute_and_record(
     history: Option<&HistoryStore>,
     report: &mut RunReport,
 ) -> Result<(), RuntimeError> {
-    let operation_id = history
-        .map(|store| store.create_operation(&plan.source, &plan.destination, &plan.rule_id))
-        .transpose()?;
-    if let (Some(store), Some(id)) = (history, operation_id) {
-        store.update_operation(id, OperationState::InProgress, None)?;
-    }
+    let journal_source = fs::canonicalize(&plan.source).unwrap_or_else(|_| plan.source.clone());
+    let operation_id = if let Some(store) = history {
+        match store.create_operation(&journal_source, &plan.destination, &plan.rule_id) {
+            Ok(id) => Some(id),
+            Err(error) => {
+                let message = error.to_string();
+                error!(source = %plan.source.display(), error = %message, "could not journal file move");
+                report.failed += 1;
+                report
+                    .items
+                    .push(item_from_plan(plan, ItemStatus::Failed, Some(message)));
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
+    let mut hooks = JournalHooks {
+        history,
+        operation_id,
+    };
+    let temporary_tag = operation_id.map_or_else(
+        || format!("{}-untracked", std::process::id()),
+        |id| id.to_string(),
+    );
 
-    match execute_move(plan, collision_policy) {
-        Ok(MoveOutcome::Moved { destination }) => {
+    match execute_move_with_hooks(plan, collision_policy, &temporary_tag, false, &mut hooks) {
+        Ok(MoveOutcome::Moved { destination, .. }) => {
             if let (Some(store), Some(id)) = (history, operation_id) {
                 store.update_destination(id, &destination)?;
                 store.update_operation(id, OperationState::Completed, None)?;
@@ -177,12 +202,16 @@ fn execute_and_record(
         }
         Err(move_error) => {
             let message = move_error.to_string();
-            let state = if matches!(
-                move_error,
-                sorter_fs::FsError::SourceRemovalFailed { .. }
-                    | sorter_fs::FsError::PublishedSyncFailed { .. }
-            ) {
-                OperationState::RecoveryRequired
+            let state = if move_error.needs_recovery() {
+                if let (Some(store), Some(id)) = (history, operation_id) {
+                    if store.operation(id)?.state == OperationState::Published {
+                        OperationState::Published
+                    } else {
+                        OperationState::RecoveryRequired
+                    }
+                } else {
+                    OperationState::RecoveryRequired
+                }
             } else {
                 OperationState::Failed
             };
@@ -197,6 +226,384 @@ fn execute_and_record(
         }
     }
     Ok(())
+}
+
+struct JournalHooks<'a> {
+    history: Option<&'a HistoryStore>,
+    operation_id: Option<i64>,
+}
+
+impl TransferHooks for JournalHooks<'_> {
+    fn record(&mut self, event: TransferEvent) -> Result<(), String> {
+        let (Some(history), Some(id)) = (self.history, self.operation_id) else {
+            return Ok(());
+        };
+        let result = match event {
+            TransferEvent::Prepared {
+                destination,
+                temporary_path,
+                kind,
+                source,
+            } => {
+                history.record_prepared(id, &destination, temporary_path.as_deref(), kind, &source)
+            }
+            TransferEvent::Copied => history.update_operation(id, OperationState::Copied, None),
+            TransferEvent::Verified => history.update_operation(id, OperationState::Verified, None),
+            TransferEvent::Published => {
+                history.update_operation(id, OperationState::Published, None)
+            }
+            TransferEvent::SourceRemoved => {
+                history.update_operation(id, OperationState::Completed, None)
+            }
+        };
+        result.map_err(|error| error.to_string())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RecoveryOptions {
+    pub apply: bool,
+    pub operation_id: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RecoveryReport {
+    pub apply: bool,
+    pub inspected: u64,
+    pub completed: u64,
+    pub closed_without_changes: u64,
+    pub needs_review: u64,
+    pub items: Vec<RecoveryItem>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RecoveryItem {
+    pub operation_id: i64,
+    pub source: PathBuf,
+    pub destination: PathBuf,
+    pub previous_state: OperationState,
+    pub status: RecoveryStatus,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryStatus {
+    WouldComplete,
+    Completed,
+    WouldCloseWithoutChanges,
+    ClosedWithoutChanges,
+    NeedsReview,
+}
+
+pub fn recover_operations(
+    history: &HistoryStore,
+    options: RecoveryOptions,
+) -> Result<RecoveryReport, RuntimeError> {
+    let operations = history.recoverable(options.operation_id)?;
+    let mut report = RecoveryReport {
+        apply: options.apply,
+        inspected: 0,
+        completed: 0,
+        closed_without_changes: 0,
+        needs_review: 0,
+        items: Vec::with_capacity(operations.len()),
+    };
+    for operation in operations {
+        report.inspected += 1;
+        let item = recover_one(history, &operation, options.apply)?;
+        match item.status {
+            RecoveryStatus::Completed => report.completed += 1,
+            RecoveryStatus::ClosedWithoutChanges => report.closed_without_changes += 1,
+            RecoveryStatus::NeedsReview => report.needs_review += 1,
+            RecoveryStatus::WouldComplete | RecoveryStatus::WouldCloseWithoutChanges => {}
+        }
+        report.items.push(item);
+    }
+    Ok(report)
+}
+
+fn recover_one(
+    history: &HistoryStore,
+    operation: &OperationRecord,
+    apply: bool,
+) -> Result<RecoveryItem, RuntimeError> {
+    let source_exists = match regular_file_exists(&operation.source) {
+        Ok(value) => value,
+        Err(message) => return needs_review(history, operation, apply, message),
+    };
+    let destination_exists = match regular_file_exists(&operation.destination) {
+        Ok(value) => value,
+        Err(message) => return needs_review(history, operation, apply, message),
+    };
+    let temporary_exists = match operation.temporary_path.as_deref() {
+        Some(path) => match regular_file_exists(path) {
+            Ok(value) => value,
+            Err(message) => return needs_review(history, operation, apply, message),
+        },
+        None => false,
+    };
+
+    match (source_exists, destination_exists, temporary_exists) {
+        (true, true, _) => recover_source_and_destination(history, operation, apply),
+        (true, false, true) => recover_verified_temporary(history, operation, apply),
+        (true, false, false) => close_unchanged_operation(history, operation, apply),
+        (false, true, _) if operation.state == OperationState::Published => {
+            complete_published_destination(history, operation, apply, temporary_exists)
+        }
+        (false, true, _) => needs_review(
+            history,
+            operation,
+            apply,
+            "the source is missing but publication was not durably journaled".into(),
+        ),
+        (false, false, true) => needs_review(
+            history,
+            operation,
+            apply,
+            "only the private temporary file remains; source disappearance is ambiguous".into(),
+        ),
+        (false, false, false) => needs_review(
+            history,
+            operation,
+            apply,
+            "source, destination, and temporary file are all missing".into(),
+        ),
+    }
+}
+
+fn recover_source_and_destination(
+    history: &HistoryStore,
+    operation: &OperationRecord,
+    apply: bool,
+) -> Result<RecoveryItem, RuntimeError> {
+    let content_matches = match files_equal(&operation.source, &operation.destination) {
+        Ok(value) => value,
+        Err(error) => return needs_review(history, operation, apply, error.to_string()),
+    };
+    if !content_matches {
+        return needs_review(
+            history,
+            operation,
+            apply,
+            "source and destination differ; neither file was changed".into(),
+        );
+    }
+
+    let publication_is_ours = if operation.state == OperationState::Published {
+        true
+    } else if operation.transfer_kind == Some(TransferKind::HardLink) {
+        same_file_identity(&operation.source, &operation.destination).unwrap_or(false)
+    } else if let Some(temporary) = operation.temporary_path.as_deref() {
+        regular_file_exists(temporary).unwrap_or(false)
+            && same_file_identity(temporary, &operation.destination).unwrap_or(false)
+    } else {
+        false
+    };
+    if !publication_is_ours {
+        return needs_review(
+            history,
+            operation,
+            apply,
+            "identical files exist, but journal and file identity do not prove publication".into(),
+        );
+    }
+
+    if !apply {
+        return Ok(recovery_item(
+            operation,
+            RecoveryStatus::WouldComplete,
+            "verified publication can be completed safely".into(),
+        ));
+    }
+    cleanup_temporary_if_published(operation)?;
+    history.update_operation(operation.id, OperationState::Published, None)?;
+    remove_verified_source(&operation.source, &operation.destination)?;
+    history.update_operation(operation.id, OperationState::Completed, None)?;
+    Ok(recovery_item(
+        operation,
+        RecoveryStatus::Completed,
+        "verified destination retained and source removed".into(),
+    ))
+}
+
+fn recover_verified_temporary(
+    history: &HistoryStore,
+    operation: &OperationRecord,
+    apply: bool,
+) -> Result<RecoveryItem, RuntimeError> {
+    let temporary = operation
+        .temporary_path
+        .as_deref()
+        .expect("temporary existence was checked");
+    match files_equal(&operation.source, temporary) {
+        Ok(true) => {}
+        Ok(false) => {
+            return needs_review(
+                history,
+                operation,
+                apply,
+                "temporary file is incomplete or differs from source".into(),
+            );
+        }
+        Err(error) => return needs_review(history, operation, apply, error.to_string()),
+    }
+    if !apply {
+        return Ok(recovery_item(
+            operation,
+            RecoveryStatus::WouldComplete,
+            "verified temporary file can be published safely".into(),
+        ));
+    }
+    if let Err(error) = publish_verified_temporary(temporary, &operation.destination) {
+        return needs_review(history, operation, true, error.to_string());
+    }
+    history.update_operation(operation.id, OperationState::Published, None)?;
+    if let Err(error) = fs::remove_file(temporary) {
+        return needs_review(
+            history,
+            operation,
+            true,
+            format!("destination is published; temporary cleanup failed: {error}"),
+        );
+    }
+    if let Err(error) = remove_verified_source(&operation.source, &operation.destination) {
+        return needs_review(history, operation, true, error.to_string());
+    }
+    history.update_operation(operation.id, OperationState::Completed, None)?;
+    Ok(recovery_item(
+        operation,
+        RecoveryStatus::Completed,
+        "verified temporary file published and source removed".into(),
+    ))
+}
+
+fn close_unchanged_operation(
+    history: &HistoryStore,
+    operation: &OperationRecord,
+    apply: bool,
+) -> Result<RecoveryItem, RuntimeError> {
+    let message = "no destination data exists; the unchanged source was retained";
+    if apply {
+        history.update_operation(operation.id, OperationState::Failed, Some(message))?;
+    }
+    Ok(recovery_item(
+        operation,
+        if apply {
+            RecoveryStatus::ClosedWithoutChanges
+        } else {
+            RecoveryStatus::WouldCloseWithoutChanges
+        },
+        message.into(),
+    ))
+}
+
+fn complete_published_destination(
+    history: &HistoryStore,
+    operation: &OperationRecord,
+    apply: bool,
+    temporary_exists: bool,
+) -> Result<RecoveryItem, RuntimeError> {
+    if let Some(expected) = &operation.source_fingerprint {
+        match fs::metadata(&operation.destination) {
+            Ok(metadata) if metadata.len() == expected.size => {}
+            Ok(_) => {
+                return needs_review(
+                    history,
+                    operation,
+                    apply,
+                    "published destination size differs from journal metadata".into(),
+                );
+            }
+            Err(error) => return needs_review(history, operation, apply, error.to_string()),
+        }
+    }
+    if !apply {
+        return Ok(recovery_item(
+            operation,
+            RecoveryStatus::WouldComplete,
+            "source removal and destination publication are already reflected on disk".into(),
+        ));
+    }
+    if temporary_exists {
+        cleanup_temporary_if_published(operation)?;
+    }
+    history.update_operation(operation.id, OperationState::Completed, None)?;
+    Ok(recovery_item(
+        operation,
+        RecoveryStatus::Completed,
+        "journal marked complete; published destination was preserved".into(),
+    ))
+}
+
+fn cleanup_temporary_if_published(operation: &OperationRecord) -> Result<(), RuntimeError> {
+    let Some(temporary) = operation.temporary_path.as_deref() else {
+        return Ok(());
+    };
+    if !temporary.exists() {
+        return Ok(());
+    }
+    let matches = same_file_identity(temporary, &operation.destination)
+        .or_else(|_| files_equal(temporary, &operation.destination))
+        .unwrap_or(false);
+    if matches {
+        fs::remove_file(temporary).map_err(|error| RuntimeError::InspectSource {
+            path: temporary.to_path_buf(),
+            source: error,
+        })?;
+    }
+    Ok(())
+}
+
+fn needs_review(
+    history: &HistoryStore,
+    operation: &OperationRecord,
+    apply: bool,
+    message: String,
+) -> Result<RecoveryItem, RuntimeError> {
+    if apply && operation.state != OperationState::Published {
+        history.update_operation(
+            operation.id,
+            OperationState::RecoveryRequired,
+            Some(&message),
+        )?;
+    }
+    Ok(recovery_item(
+        operation,
+        RecoveryStatus::NeedsReview,
+        message,
+    ))
+}
+
+fn recovery_item(
+    operation: &OperationRecord,
+    status: RecoveryStatus,
+    message: String,
+) -> RecoveryItem {
+    RecoveryItem {
+        operation_id: operation.id,
+        source: operation.source.clone(),
+        destination: operation.destination.clone(),
+        previous_state: operation.state,
+        status,
+        message,
+    }
+}
+
+fn regular_file_exists(path: &Path) -> Result<bool, String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(format!(
+            "refusing recovery through symbolic link {}",
+            path.display()
+        )),
+        Ok(metadata) if metadata.is_file() => Ok(true),
+        Ok(_) => Err(format!(
+            "recovery path is not a regular file: {}",
+            path.display()
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("could not inspect {}: {error}", path.display())),
+    }
 }
 
 fn item_from_plan(plan: &PlannedMove, status: ItemStatus, error: Option<String>) -> ItemReport {
@@ -248,6 +655,7 @@ fn validate_no_recursive_loops(options: &OneShotOptions<'_>) -> Result<(), Runti
 mod tests {
     use super::*;
     use sorter_core::MatchSpec;
+    use sorter_fs::FileFingerprint;
     use std::fs;
     use tempfile::tempdir;
 
@@ -336,5 +744,152 @@ mod tests {
         assert_eq!(report.failed, 1);
         assert_eq!(report.moved, 1);
         assert_eq!(fs::read(destination.join("a.txt")).unwrap(), b"old-a");
+    }
+
+    fn fingerprint(size: u64) -> FileFingerprint {
+        FileFingerprint {
+            size,
+            modified_unix_ns: None,
+            device: None,
+            file_id: None,
+        }
+    }
+
+    #[test]
+    fn recovery_completes_journaled_publication_idempotently() {
+        let root = tempdir().unwrap();
+        let source = root.path().join("source.txt");
+        let destination = root.path().join("destination.txt");
+        fs::write(&source, b"recover me").unwrap();
+        fs::hard_link(&source, &destination).unwrap();
+        let store = HistoryStore::open(&root.path().join("history.db")).unwrap();
+        let id = store
+            .create_operation(&source, &destination, "text")
+            .unwrap();
+        store
+            .record_prepared(
+                id,
+                &destination,
+                None,
+                TransferKind::HardLink,
+                &fingerprint(10),
+            )
+            .unwrap();
+        store
+            .update_operation(id, OperationState::Published, None)
+            .unwrap();
+
+        let preview = recover_operations(
+            &store,
+            RecoveryOptions {
+                apply: false,
+                operation_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(preview.items[0].status, RecoveryStatus::WouldComplete);
+        assert!(source.exists());
+
+        let applied = recover_operations(
+            &store,
+            RecoveryOptions {
+                apply: true,
+                operation_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(applied.completed, 1);
+        assert!(!source.exists());
+        assert_eq!(fs::read(&destination).unwrap(), b"recover me");
+        assert_eq!(
+            store.operation(id).unwrap().state,
+            OperationState::Completed
+        );
+
+        let repeated = recover_operations(
+            &store,
+            RecoveryOptions {
+                apply: true,
+                operation_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(repeated.inspected, 0);
+    }
+
+    #[test]
+    fn recovery_publishes_only_a_verified_matching_temporary_file() {
+        let root = tempdir().unwrap();
+        let source = root.path().join("source.txt");
+        let destination = root.path().join("destination.txt");
+        let temporary = root.path().join(".destination.partial");
+        fs::write(&source, b"verified").unwrap();
+        fs::write(&temporary, b"verified").unwrap();
+        let store = HistoryStore::open(&root.path().join("history.db")).unwrap();
+        let id = store
+            .create_operation(&source, &destination, "text")
+            .unwrap();
+        store
+            .record_prepared(
+                id,
+                &destination,
+                Some(&temporary),
+                TransferKind::StagedCopy,
+                &fingerprint(8),
+            )
+            .unwrap();
+        store
+            .update_operation(id, OperationState::Verified, None)
+            .unwrap();
+
+        let report = recover_operations(
+            &store,
+            RecoveryOptions {
+                apply: true,
+                operation_id: Some(id),
+            },
+        )
+        .unwrap();
+        assert_eq!(report.completed, 1);
+        assert!(!source.exists());
+        assert!(!temporary.exists());
+        assert_eq!(fs::read(destination).unwrap(), b"verified");
+    }
+
+    #[test]
+    fn recovery_preserves_ambiguous_files() {
+        let root = tempdir().unwrap();
+        let source = root.path().join("source.txt");
+        let destination = root.path().join("destination.txt");
+        fs::write(&source, b"source").unwrap();
+        fs::write(&destination, b"different").unwrap();
+        let store = HistoryStore::open(&root.path().join("history.db")).unwrap();
+        let id = store
+            .create_operation(&source, &destination, "text")
+            .unwrap();
+        store
+            .record_prepared(
+                id,
+                &destination,
+                None,
+                TransferKind::HardLink,
+                &fingerprint(6),
+            )
+            .unwrap();
+        store
+            .update_operation(id, OperationState::RecoveryRequired, None)
+            .unwrap();
+
+        let report = recover_operations(
+            &store,
+            RecoveryOptions {
+                apply: true,
+                operation_id: Some(id),
+            },
+        )
+        .unwrap();
+        assert_eq!(report.needs_review, 1);
+        assert_eq!(fs::read(source).unwrap(), b"source");
+        assert_eq!(fs::read(destination).unwrap(), b"different");
     }
 }

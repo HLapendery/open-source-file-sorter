@@ -6,6 +6,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+filetime.workspace = true
+same-file.workspace = true
 serde.workspace = true
 sorter-core = { path = "../sorter-core" }
 thiserror.workspace = true
@@ -16,4 +18,3 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
-

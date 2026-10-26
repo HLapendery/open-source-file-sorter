@@ -9,15 +9,19 @@
 - basic SQLite history;
 - unit, property, integration, and CLI tests.
 
-## Phase 3 — Reliability
+## Phase 3 — Reliability (implemented)
 
 - durable operation journal with transactional state transitions;
-- staged cross-filesystem transfers and selectable verification;
+- staged cross-filesystem transfers with byte-for-byte verification;
 - source identity/change checks around long copies;
 - idempotent recovery based on journal plus actual filesystem state;
-- process-level and per-source operation locking;
+- SQLite-backed per-source operation locking across processes;
 - fault injection at every copy, publication, deletion, and journal boundary;
 - lossless persistence for native non-UTF-8 paths where supported.
+
+Remaining hardening work includes testing on real removable/network
+filesystems, platform-specific directory-handle APIs, and benchmarking before
+introducing bounded parallel transfers.
 
 ## Phase 4 — Automation
 
@@ -41,4 +45,3 @@
 - installers and signed artifacts where practical;
 - security review and release automation;
 - platform-specific durability and watcher documentation.
-
