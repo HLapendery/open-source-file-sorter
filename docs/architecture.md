@@ -2,9 +2,9 @@
 
 ## Scope and status
 
-This document records the Phase 1 decisions and the implemented Phase 2 CLI
-MVP. It intentionally does not claim the reliability features planned for
-later phases.
+This document records the architecture through the implemented Phase 3
+reliability work. Watching, scheduling, and the desktop application remain
+future phases.
 
 ## Workspace boundaries
 
@@ -34,9 +34,10 @@ render state and invoke Rust commands.
 ### Rust workspace and synchronous I/O
 
 Filesystem operations are synchronous because standard filesystem APIs are
-blocking and the MVP executes sequentially. This avoids an async runtime and
-keeps failure ordering understandable. Phase 3 will add a small bounded worker
-pool only after operation locking and recovery are in place.
+blocking and one-shot execution remains sequential. This avoids an async
+runtime and keeps failure ordering understandable. SQLite enforces one active
+operation per normalized source path across processes. Bounded concurrency is
+deferred until measurement shows that it improves throughput.
 
 ### Compiled, deterministic matching
 
@@ -49,14 +50,19 @@ A match specification contains condition groups. Values inside one group are
 ORed; `operator = "all"` ANDs the populated groups, while `operator = "any"`
 ORs them. New groups can be added without changing rule ordering or planning.
 
-### No-clobber local movement
+### No-clobber publication and staged transfer
 
-Portable `std::fs::rename` may replace an existing destination depending on the
-platform. Phase 2 therefore uses `hard_link(source, destination)`, `fsync`, then
-`remove_file(source)`. Creating the destination link is atomic and fails if the
-name exists. The trade-off is that filesystems without hard-link support and
-cross-device moves are rejected. Platform-specific atomic rename APIs remain a
-possible later optimization, but not a requirement.
+Portable `std::fs::rename` may replace an existing destination. The engine
+therefore publishes with `hard_link`, which is atomic and fails if the final
+name already exists. On one filesystem this directly links the source. Across
+filesystems, data is streamed into a private file beside the destination,
+synchronized, compared byte-for-byte with the still-open source, and only then
+published. The source is revalidated before deletion.
+
+Hard links are used as the portable no-clobber primitive. Filesystems without
+hard-link support fail closed. Copy verification deliberately avoids storing a
+hash: a direct comparison costs a second read but has no collision assumption
+and no persistent checksum overhead.
 
 ### SQLite with bundled SQLite
 
@@ -64,9 +70,12 @@ SQLite provides durable local history without a service. WAL plus `FULL`
 synchronous mode is enabled. The bundled feature increases binary size and
 compile time but makes desktop and container installations predictable.
 
-The Phase 2 state transitions are history, not yet a complete recovery journal.
-Phase 3 must add durable intent metadata, actual-state reconciliation,
-idempotent recovery, and fault injection before crash safety is claimed.
+Each transfer records its selected destination, private temporary path, kind,
+source fingerprint, and state before destructive work. States include
+`PLANNED`, `IN_PROGRESS`, `COPIED`, `VERIFIED`, `PUBLISHED`,
+`RECOVERY_REQUIRED`, and terminal results. Recovery treats the filesystem as
+authoritative, verifies content or file identity, and refuses ambiguous
+deletion. `sorter recover` is inspection-only unless `--apply` is explicit.
 
 ### TOML configuration with explicit versioning
 
@@ -83,14 +92,13 @@ dependency graph.
 
 ## Risks
 
-- crash points after a filesystem mutation but before a SQLite update need a
-  true recovery journal and fault-injection tests;
-- cross-filesystem copy verification must detect source changes and ambiguous
-  post-crash states without deleting either copy;
 - watcher events do not imply write completion and require stabilization,
   debouncing, reconciliation scans, and loop protection;
-- path aliases, mount points, network filesystems, case folding, and non-UTF-8
-  history representation vary by platform;
+- directory replacement races, hard-link aliases, mount points, network
+  filesystems, and case folding vary by platform;
+- source-change detection uses identity, size, modification time, and
+  byte-for-byte verification; no portable userspace API can prevent a hostile
+  writer in the final validation-to-unlink interval;
 - high-volume throughput must be measured before concurrency is introduced.
 
 ## Phase summaries
@@ -110,3 +118,10 @@ property, integration, and CLI tests.
 
 Known limitations are listed in the roadmap and filesystem safety document.
 
+### Phase 3 — Reliability
+
+Implemented a durable SQLite journal with lossless native path storage,
+cross-filesystem staged transfers, byte-for-byte verification, source-change
+checks, persistent per-source locking, conservative idempotent recovery, and
+fault-injection coverage around copy, publication, source deletion, and journal
+boundaries.
