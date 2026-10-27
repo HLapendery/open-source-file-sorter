@@ -2,6 +2,12 @@ version = 1
 
 [settings]
 collision_policy = "skip"
+watch_debounce_ms = 500
+stabilization_delay_ms = 2000
+reconciliation_interval_seconds = 300
+event_queue_capacity = 1024
+max_concurrent_operations = 2
+temporary_file_globs = ["*.crdownload", "*.download", "*.part", "*.partial", "*.tmp", "~$*"]
 
 [[rules]]
 id = "documents"
@@ -27,7 +33,6 @@ case_sensitive = false
 id = "downloads"
 path = "/files/incoming"
 enabled = true
-mode = "once"
+mode = "watch"
 recursive = false
 rules = ["documents", "invoices"]
-

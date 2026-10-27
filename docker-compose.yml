@@ -1,17 +1,32 @@
+x-sorter-common: &sorter-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: open-source-file-sorter:local
+  init: true
+  stop_grace_period: 30s
+  environment:
+    RUST_LOG: ${SORTER_LOG_LEVEL:-warn}
+    SORTER_CONFIG: /config/sorter.toml
+    SORTER_DATABASE: /data/sorter.db
+    TZ: ${TZ:-Europe/Paris}
+  volumes:
+    - ./config:/config
+    - ./data:/data
+    - ${SORTER_FILES_ROOT:-./sandbox}:/files
+
 services:
   sorter:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: open-source-file-sorter:local
-    init: true
-    environment:
-      RUST_LOG: ${SORTER_LOG_LEVEL:-warn}
-      SORTER_CONFIG: /config/sorter.toml
-      SORTER_DATABASE: /data/sorter.db
-      TZ: ${TZ:-Europe/Paris}
-    volumes:
-      - ./config:/config
-      - ./data:/data
-      - ${SORTER_FILES_ROOT:-./sandbox}:/files
+    <<: *sorter-common
 
+  watcher:
+    <<: *sorter-common
+    command: ["watch"]
+    restart: unless-stopped
+    profiles: ["watch"]
+
+  scheduler:
+    <<: *sorter-common
+    command: ["schedule"]
+    restart: unless-stopped
+    profiles: ["schedule"]
