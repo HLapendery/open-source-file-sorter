@@ -87,8 +87,17 @@ modification time, and byte comparison. It detects normal concurrent writers
 during a long transfer, but cannot lock out a hostile writer that deliberately
 restores metadata inside the final validation-to-unlink interval.
 
-Watch-mode stabilization is not implemented until Phase 4. One-shot callers
-remain responsible for avoiding files that are still actively being written.
+Watch mode waits for two identical metadata observations and then requires size
+and modification time to remain unchanged for the configured stabilization
+delay. Events reset stabilization, bounded queue overflow requests
+reconciliation, and common temporary filename patterns are excluded.
+
+This remains a heuristic: a writer can pause longer than the delay and resume
+later. Native event delivery can also be incomplete on network filesystems,
+inside some virtualized Docker environments, or during event storms. Periodic
+streaming reconciliation is therefore the source of eventual discovery.
+One-shot and scheduled callers remain responsible for choosing execution times
+when non-temporary files are not being actively written.
 
 ## Test coverage
 

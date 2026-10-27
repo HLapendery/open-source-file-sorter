@@ -16,6 +16,10 @@ Changelog and intends to use Semantic Versioning after the first release.
 - Verified staged transfers across filesystem boundaries.
 - Conservative, idempotent `sorter recover` inspection and recovery.
 - Persistent per-source operation locking and transfer fault-injection tests.
+- Native multi-directory watchdog with bounded debounce and stabilization.
+- Streaming reconciliation for missed events and queue overflow.
+- Independent local/UTC cron workers with overlap prevention.
+- Graceful signal handling and Docker Compose automation profiles.
 
 ### Known limitations
 
