@@ -23,7 +23,7 @@ Remaining hardening work includes testing on real removable/network
 filesystems, platform-specific directory-handle APIs, and benchmarking before
 introducing bounded parallel transfers.
 
-## Phase 4 — Automation
+## Phase 4 — Automation (implemented)
 
 - native `notify` watcher;
 - bounded event queues, debounce, stabilization, and temporary-file exclusions;
@@ -31,6 +31,10 @@ introducing bounded parallel transfers.
 - per-directory cron scheduler with local/UTC semantics;
 - overlap prevention and graceful shutdown;
 - independent failure domains for all configured directories.
+
+The implementation uses one synchronous worker per directory, a global
+execution gate, bounded native-event and stabilization queues, and streaming
+reconciliation. No background HTTP service or async runtime is required.
 
 ## Phase 5 — Desktop
 

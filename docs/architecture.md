@@ -2,9 +2,8 @@
 
 ## Scope and status
 
-This document records the architecture through the implemented Phase 3
-reliability work. Watching, scheduling, and the desktop application remain
-future phases.
+This document records the architecture through the implemented Phase 4
+automation work. The desktop application remains a future phase.
 
 ## Workspace boundaries
 
@@ -22,7 +21,8 @@ sorter-storage -> sorter-core, sorter-fs (shared serialized domain types)
   ordering, and move plans. It has no CLI, database, watcher, or GUI dependency.
 - `sorter-fs` owns conservative filesystem mutations and collision policies.
 - `sorter-storage` owns versioned TOML configuration and SQLite history.
-- `sorter-runtime` streams directory entries and coordinates one-shot work.
+- `sorter-runtime` streams directory entries and coordinates one-shot, watch,
+  scheduled, stabilization, reconciliation, and shutdown work.
 - `sorter-cli` translates commands and output formats. It contains no matching
   or movement logic.
 
@@ -34,10 +34,33 @@ render state and invoke Rust commands.
 ### Rust workspace and synchronous I/O
 
 Filesystem operations are synchronous because standard filesystem APIs are
-blocking and one-shot execution remains sequential. This avoids an async
-runtime and keeps failure ordering understandable. SQLite enforces one active
-operation per normalized source path across processes. Bounded concurrency is
-deferred until measurement shows that it improves throughput.
+blocking. This avoids an async runtime and keeps failure ordering
+understandable. One worker owns each automated directory, scheduled runs cannot
+overlap themselves, and a small global gate bounds work across directories.
+SQLite additionally enforces one active operation per normalized source path
+across processes.
+
+### Native events with reconciliation
+
+`notify` selects the native watcher backend. Its callback only attempts to
+enqueue an event in a bounded channel; it never performs filesystem work.
+Workers debounce paths and require two unchanged observations plus a configured
+stabilization interval before matching or moving them.
+
+Native notifications are hints because operating systems and network
+filesystems can omit them. A periodic `walkdir` iterator supplies
+reconciliation candidates into the same bounded pending set. The iterator is
+retained between batches, so a directory with hundreds of thousands of files
+does not require an equally large in-memory path list. Queue overflow requests
+another reconciliation.
+
+### Scheduling and shutdown
+
+One thread owns each cron-configured directory and calculates occurrences in
+the explicitly selected local or UTC timezone. It completes a run before
+asking for the next occurrence. A shared condition-variable token wakes
+schedulers for `SIGINT`, `SIGTERM`, or `SIGHUP` and watcher loops stop at safe
+boundaries.
 
 ### Compiled, deterministic matching
 
@@ -92,8 +115,8 @@ dependency graph.
 
 ## Risks
 
-- watcher events do not imply write completion and require stabilization,
-  debouncing, reconciliation scans, and loop protection;
+- stabilization cannot prove that a paused external writer has permanently
+  finished, and native events have platform/filesystem-specific limitations;
 - directory replacement races, hard-link aliases, mount points, network
   filesystems, and case folding vary by platform;
 - source-change detection uses identity, size, modification time, and
@@ -125,3 +148,11 @@ cross-filesystem staged transfers, byte-for-byte verification, source-change
 checks, persistent per-source locking, conservative idempotent recovery, and
 fault-injection coverage around copy, publication, source deletion, and journal
 boundaries.
+
+### Phase 4 — Automation
+
+Implemented native watchdog workers, bounded event handling, debounce,
+stabilization, temporary-file exclusions, streaming reconciliation, local/UTC
+cron workers, global bounded execution, independent directory failure domains,
+and graceful signal-driven shutdown. Compose profiles run watch and schedule
+workers without adding a daemon or HTTP API.

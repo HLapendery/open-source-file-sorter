@@ -4,10 +4,10 @@ A conservative, headless-first file organizer written in Rust. Rules are
 deterministic, existing files are never overwritten, and every real operation
 is recorded in SQLite.
 
-> **Project status:** Phase 3 reliability CLI. One-shot sorting, verified
-> cross-filesystem transfer, durable journaling, and conservative recovery are
-> usable. Watching, scheduling, and the desktop GUI are not implemented yet;
-> see [the roadmap](docs/roadmap.md).
+> **Project status:** Phase 4 headless automation. One-shot sorting, verified
+> cross-filesystem transfer, durable recovery, native watching, and cron
+> scheduling are usable. The desktop GUI is not implemented yet; see
+> [the roadmap](docs/roadmap.md).
 
 ## What works
 
@@ -25,30 +25,78 @@ is recorded in SQLite.
 - persistent protection against simultaneous operations on one source path;
 - multiple named directory configurations;
 - TOML and cron syntax validation;
+- independent native filesystem watchers with bounded queues;
+- debounce, file stabilization, temporary-file exclusions, and reconciliation;
+- independent local/UTC cron schedules with overlap prevention;
+- graceful `SIGINT`/`SIGTERM` shutdown;
 - Linux, macOS, and Windows compilation in CI.
 
-## Quick start with Docker Compose
+## Installation with Docker Compose
 
-The repository wrapper supplies the normal homelab environment files:
+Docker Engine with the Compose plugin, or Docker Desktop on macOS/Windows, is
+the only installation prerequisite.
 
+~~~bash
+git clone https://github.com/HLapendery/open-source-file-sorter.git
+cd open-source-file-sorter
+
+mkdir -p config data sandbox/incoming
+cp examples/sorter.example.toml config/sorter.toml
+docker compose build
+docker compose run --rm sorter validate
 ~~~
-mkdir -p file-sorter/sandbox/incoming
-cp ~/Downloads/example.pdf file-sorter/sandbox/incoming/
 
+PowerShell equivalent after cloning:
+
+~~~powershell
+New-Item -ItemType Directory -Force config, data, sandbox/incoming
+Copy-Item examples/sorter.example.toml config/sorter.toml
+docker compose build
+docker compose run --rm sorter validate
+~~~
+
+Place a test file in `sandbox/incoming`, preview the plan, then run it:
+
+~~~bash
+cp ~/Downloads/example.pdf sandbox/incoming/
+docker compose run --rm sorter run --directory downloads --dry-run
+docker compose run --rm sorter run --directory downloads
+docker compose run --rm sorter history
+docker compose run --rm sorter recover
+~~~
+
+The example configuration declares `downloads` in `watch` mode. Start the
+long-running watcher profile with:
+
+~~~bash
+docker compose --profile watch up -d watcher
+docker compose logs -f watcher
+docker compose stop watcher
+~~~
+
+For scheduled directories, set `mode = "scheduled"` and a six-field cron
+expression in `config/sorter.toml`, then start:
+
+~~~bash
+docker compose --profile schedule up -d scheduler
+docker compose logs -f scheduler
+docker compose stop scheduler
+~~~
+
+The homelab wrapper remains optional. From the parent homelab repository, the
+equivalent commands are:
+
+~~~bash
+mkdir -p file-sorter/sandbox/incoming
 ./compose-stack file-sorter config
 ./compose-stack file-sorter run --rm sorter validate
-./compose-stack file-sorter run --rm sorter run --directory downloads --dry-run
-./compose-stack file-sorter run --rm sorter run --directory downloads
-./compose-stack file-sorter run --rm sorter history
-./compose-stack file-sorter run --rm sorter recover
-./compose-stack file-sorter run --rm sorter recover --apply
 ~~~
 
 The default Compose mount maps `file-sorter/sandbox` to `/files`. To organize a
 different host tree, set `SORTER_FILES_ROOT` before invoking the wrapper:
 
 ~~~
-SORTER_FILES_ROOT=/srv/incoming ./compose-stack file-sorter run --rm sorter \
+SORTER_FILES_ROOT=/srv/files docker compose run --rm sorter \
   run --directory downloads --dry-run
 ~~~
 
@@ -75,6 +123,8 @@ sorter init
 sorter validate
 sorter run PATH --dry-run [--recursive] [--json] [-v]
 sorter run --directory ID [--collision skip|rename-with-suffix|error]
+sorter watch [--directory ID] [--json]
+sorter schedule [--directory ID] [--json]
 sorter rules list [--json]
 sorter rules enable ID
 sorter rules disable ID
@@ -101,12 +151,19 @@ paths, deletes a source only after renewed verification, and leaves ambiguous
 states untouched for manual review. See
 [filesystem safety](docs/filesystem-safety.md) for guarantees and limitations.
 
+Native filesystem notification is an optimization, not the source of truth:
+bounded periodic reconciliation finds eligible files after dropped or
+unsupported events. A watcher requires unchanged size and modification time
+for the configured stabilization interval, but this remains a heuristic and
+cannot prove that an external writer has permanently closed a file.
+
 ## Documentation
 
 - [Architecture and decisions](docs/architecture.md)
 - [Configuration reference](docs/configuration.md)
 - [Filesystem safety](docs/filesystem-safety.md)
 - [Phase 3 implementation summary](docs/phase-3-summary.md)
+- [Phase 4 implementation summary](docs/phase-4-summary.md)
 - [Development roadmap](docs/roadmap.md)
 - [Developer guide](docs/development.md)
 

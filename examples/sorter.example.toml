@@ -3,6 +3,15 @@ version = 1
 [settings]
 # Existing files are never overwritten. Other values: "rename-with-suffix", "error".
 collision_policy = "skip"
+# Watch events are coalesced before a file is inspected.
+watch_debounce_ms = 500
+# A file must keep the same size and modification time for this long.
+stabilization_delay_ms = 2000
+# Native notifications are reconciled periodically because events can be lost.
+reconciliation_interval_seconds = 300
+event_queue_capacity = 1024
+max_concurrent_operations = 2
+temporary_file_globs = ["*.crdownload", "*.download", "*.part", "*.partial", "*.tmp", "~$*"]
 
 [[rules]]
 id = "documents"
@@ -39,6 +48,11 @@ extensions = ["txt", "md"]
 id = "downloads"
 path = "/files/incoming"
 enabled = true
-mode = "once"
+mode = "watch"
 recursive = false
 rules = ["documents", "invoices", "text-reports"]
+
+# Scheduled mode uses six-field cron expressions including seconds:
+# mode = "scheduled"
+# schedule = "0 0 2 * * *"
+# schedule_timezone = "local" # or "utc"

@@ -6,6 +6,10 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+chrono.workspace = true
+cron.workspace = true
+globset.workspace = true
+notify.workspace = true
 serde.workspace = true
 sorter-core = { path = "../sorter-core" }
 sorter-fs = { path = "../sorter-fs" }
@@ -19,4 +23,3 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
-

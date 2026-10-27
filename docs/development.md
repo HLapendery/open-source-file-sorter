@@ -15,6 +15,14 @@ cargo test --workspace
 cargo build --locked --release --bin sorter
 ~~~
 
+Standalone Compose validation from this repository:
+
+~~~bash
+docker compose config
+docker compose build
+docker compose run --rm sorter validate
+~~~
+
 Tests use temporary directories. Never point tests at personal data. Filesystem
 tests must assert preservation of both the source and any existing destination
 on failure.

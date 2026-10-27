@@ -3,8 +3,8 @@ use clap::{Args, Parser, Subcommand};
 use sorter_core::{MatchSpec, Rule};
 use sorter_fs::CollisionPolicy;
 use sorter_runtime::{
-    recover_operations, run_once, OneShotOptions, RecoveryOptions, RecoveryReport, RecoveryStatus,
-    RunReport,
+    recover_operations, run_once, run_scheduled, run_watch, AutomationReport, AutomationSelection,
+    OneShotOptions, RecoveryOptions, RecoveryReport, RecoveryStatus, RunReport, ShutdownToken,
 };
 use sorter_storage::{
     Config, DirectoryConfig, ExecutionMode, HistoryStore, ScheduleTimezone, Settings,
@@ -59,6 +59,10 @@ enum Command {
     Validate,
     /// Scan and sort one configured or explicit directory.
     Run(RunArgs),
+    /// Monitor configured watch directories until interrupted.
+    Watch(AutomationArgs),
+    /// Execute configured cron schedules until interrupted.
+    Schedule(AutomationArgs),
     /// Inspect or change rules.
     Rules {
         #[command(subcommand)]
@@ -109,6 +113,16 @@ struct RunArgs {
     /// Override the configured collision policy.
     #[arg(long, value_enum)]
     collision: Option<CliCollisionPolicy>,
+}
+
+#[derive(Debug, Args)]
+struct AutomationArgs {
+    /// Restrict automation to one configured directory id.
+    #[arg(long)]
+    directory: Option<String>,
+    /// Emit the final shutdown report as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -187,6 +201,12 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Run(args) => run_command(&cli.config, &cli.database, &args),
+        Command::Watch(args) => {
+            automation_command(&cli.config, &cli.database, &args, AutomationMode::Watch)
+        }
+        Command::Schedule(args) => {
+            automation_command(&cli.config, &cli.database, &args, AutomationMode::Schedule)
+        }
         Command::Rules { command } => rules_command(&cli.config, command),
         Command::Directories { command } => directories_command(&cli.config, &command),
         Command::History { limit, json } => history_command(&cli.database, limit, json),
@@ -196,6 +216,61 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             json,
         } => recover_command(&cli.database, apply, operation, json),
     }
+}
+
+#[derive(Clone, Copy)]
+enum AutomationMode {
+    Watch,
+    Schedule,
+}
+
+fn automation_command(
+    config_path: &Path,
+    database_path: &Path,
+    args: &AutomationArgs,
+    mode: AutomationMode,
+) -> Result<ExitCode> {
+    let config = Config::load(config_path)?;
+    let shutdown = ShutdownToken::default();
+    let signal_shutdown = shutdown.clone();
+    ctrlc::set_handler(move || signal_shutdown.request())?;
+    let selection = AutomationSelection {
+        directory_id: args.directory.clone(),
+    };
+    let report = match mode {
+        AutomationMode::Watch => run_watch(&config, database_path, &selection, &shutdown)?,
+        AutomationMode::Schedule => run_scheduled(&config, database_path, &selection, &shutdown)?,
+    };
+    print_automation_report(&report, args.json)?;
+    if report.has_failures() {
+        Ok(ExitCode::from(3))
+    } else {
+        Ok(ExitCode::SUCCESS)
+    }
+}
+
+fn print_automation_report(report: &AutomationReport, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+        return Ok(());
+    }
+    for worker in &report.workers {
+        println!(
+            "{}\texecutions={}\titem_failures={}{}",
+            worker.directory_id,
+            worker.executions,
+            worker.item_failures,
+            worker
+                .fatal_error
+                .as_ref()
+                .map_or_else(String::new, |error| format!("\t{error}"))
+        );
+    }
+    println!(
+        "mode={} directories_started={} worker_failures={}",
+        report.mode, report.directories_started, report.worker_failures
+    );
+    Ok(())
 }
 
 fn recover_command(
@@ -451,6 +526,7 @@ fn starter_config() -> Config {
         version: CURRENT_CONFIG_VERSION,
         settings: Settings {
             collision_policy: CollisionPolicy::Skip,
+            ..Settings::default()
         },
         rules: vec![
             Rule {
