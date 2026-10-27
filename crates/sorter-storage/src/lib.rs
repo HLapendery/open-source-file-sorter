@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 pub const CURRENT_CONFIG_VERSION: u32 = 1;
@@ -55,7 +55,13 @@ pub enum StorageError {
         schedule: String,
         reason: String,
     },
-    #[error("destination for rule {rule_id} is inside recursive source directory {directory_id}: {destination}")]
+    #[error("invalid automation setting {name}: {reason}")]
+    InvalidAutomationSetting { name: &'static str, reason: String },
+    #[error("invalid temporary-file glob {pattern:?}: {reason}")]
+    InvalidTemporaryGlob { pattern: String, reason: String },
+    #[error(
+        "destination for rule {rule_id} would feed source directory {directory_id}: {destination}"
+    )]
     RecursiveDestinationLoop {
         directory_id: String,
         rule_id: String,
@@ -100,12 +106,31 @@ const fn current_version() -> u32 {
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
     pub collision_policy: CollisionPolicy,
+    pub watch_debounce_ms: u64,
+    pub stabilization_delay_ms: u64,
+    pub reconciliation_interval_seconds: u64,
+    pub event_queue_capacity: usize,
+    pub max_concurrent_operations: usize,
+    pub temporary_file_globs: Vec<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             collision_policy: CollisionPolicy::Skip,
+            watch_debounce_ms: 500,
+            stabilization_delay_ms: 2_000,
+            reconciliation_interval_seconds: 300,
+            event_queue_capacity: 1_024,
+            max_concurrent_operations: 2,
+            temporary_file_globs: vec![
+                "*.crdownload".into(),
+                "*.download".into(),
+                "*.part".into(),
+                "*.partial".into(),
+                "*.tmp".into(),
+                "~$*".into(),
+            ],
         }
     }
 }
@@ -190,6 +215,7 @@ impl Config {
             });
         }
         MatchEngine::compile(&self.rules)?;
+        self.settings.validate_automation()?;
         let rules_by_id: HashMap<_, _> = self
             .rules
             .iter()
@@ -237,7 +263,9 @@ impl Config {
                             directory_id: directory.id.clone(),
                             rule_id: rule_id.clone(),
                         })?;
-                if directory.recursive && rule.destination.starts_with(&directory.path) {
+                if rule.destination == directory.path
+                    || (directory.recursive && rule.destination.starts_with(&directory.path))
+                {
                     return Err(StorageError::RecursiveDestinationLoop {
                         directory_id: directory.id.clone(),
                         rule_id: rule.id.clone(),
@@ -256,6 +284,54 @@ impl Config {
             .filter(|rule| ids.contains(rule.id.as_str()))
             .cloned()
             .collect()
+    }
+}
+
+impl Settings {
+    fn validate_automation(&self) -> Result<(), StorageError> {
+        for (name, value) in [
+            ("watch_debounce_ms", self.watch_debounce_ms),
+            ("stabilization_delay_ms", self.stabilization_delay_ms),
+            (
+                "reconciliation_interval_seconds",
+                self.reconciliation_interval_seconds,
+            ),
+        ] {
+            if value == 0 {
+                return Err(StorageError::InvalidAutomationSetting {
+                    name,
+                    reason: "must be greater than zero".into(),
+                });
+            }
+        }
+        for (name, value) in [
+            ("event_queue_capacity", self.event_queue_capacity),
+            ("max_concurrent_operations", self.max_concurrent_operations),
+        ] {
+            if value == 0 {
+                return Err(StorageError::InvalidAutomationSetting {
+                    name,
+                    reason: "must be greater than zero".into(),
+                });
+            }
+        }
+        let mut builder = globset::GlobSetBuilder::new();
+        for pattern in &self.temporary_file_globs {
+            let glob = globset::Glob::new(pattern).map_err(|error| {
+                StorageError::InvalidTemporaryGlob {
+                    pattern: pattern.clone(),
+                    reason: error.to_string(),
+                }
+            })?;
+            builder.add(glob);
+        }
+        builder
+            .build()
+            .map_err(|error| StorageError::InvalidTemporaryGlob {
+                pattern: "<set>".into(),
+                reason: error.to_string(),
+            })?;
+        Ok(())
     }
 }
 
@@ -352,6 +428,7 @@ impl HistoryStore {
             })?;
         }
         let connection = Connection::open(path)?;
+        connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
         connection.execute_batch(
@@ -828,6 +905,16 @@ mod tests {
     }
 
     #[test]
+    fn rejects_destination_equal_to_non_recursive_source() {
+        let mut value = config();
+        value.rules[0].destination = value.directories[0].path.clone();
+        assert!(matches!(
+            value.validate(),
+            Err(StorageError::RecursiveDestinationLoop { .. })
+        ));
+    }
+
+    #[test]
     fn validates_scheduled_cron_expression() {
         let mut value = config();
         value.directories[0].mode = ExecutionMode::Scheduled;
@@ -838,6 +925,23 @@ mod tests {
         assert!(matches!(
             value.validate(),
             Err(StorageError::InvalidSchedule { .. })
+        ));
+    }
+
+    #[test]
+    fn validates_automation_limits_and_exclusions() {
+        let mut value = config();
+        value.settings.event_queue_capacity = 0;
+        assert!(matches!(
+            value.validate(),
+            Err(StorageError::InvalidAutomationSetting { .. })
+        ));
+
+        value.settings.event_queue_capacity = 16;
+        value.settings.temporary_file_globs = vec!["[".into()];
+        assert!(matches!(
+            value.validate(),
+            Err(StorageError::InvalidTemporaryGlob { .. })
         ));
     }
 

@@ -1,5 +1,11 @@
-//! One-shot orchestration. Watch and scheduled modes are intentionally deferred.
+//! Runtime orchestration for one-shot, watched, and scheduled sorting.
 
+mod automation;
+
+pub use automation::{
+    run_scheduled, run_watch, AutomationReport, AutomationSelection, ShutdownToken,
+};
+use globset::GlobSet;
 use serde::Serialize;
 use sorter_core::{MatchEngine, PlannedMove, Rule};
 use sorter_fs::{
@@ -38,6 +44,8 @@ pub enum RuntimeError {
     Storage(#[from] sorter_storage::StorageError),
     #[error(transparent)]
     Filesystem(#[from] FsError),
+    #[error("automation error: {0}")]
+    Automation(String),
 }
 
 #[derive(Debug, Serialize)]
@@ -91,6 +99,14 @@ pub fn run_once(
     options: &OneShotOptions<'_>,
     history: Option<&HistoryStore>,
 ) -> Result<RunReport, RuntimeError> {
+    run_once_filtered(options, history, None)
+}
+
+fn run_once_filtered(
+    options: &OneShotOptions<'_>,
+    history: Option<&HistoryStore>,
+    exclusions: Option<&GlobSet>,
+) -> Result<RunReport, RuntimeError> {
     validate_source(options.source)?;
     validate_no_recursive_loops(options)?;
     let engine = MatchEngine::compile(options.rules)?;
@@ -122,6 +138,9 @@ pub fn run_once(
         if !entry.file_type().is_file() {
             continue;
         }
+        if exclusions.is_some_and(|patterns| patterns.is_match(entry.file_name())) {
+            continue;
+        }
         report.scanned += 1;
         let Some(plan) = engine.plan(entry.path())? else {
             continue;
@@ -137,6 +156,43 @@ pub fn run_once(
     }
 
     Ok(report)
+}
+
+fn run_candidate(
+    engine: &MatchEngine,
+    path: &Path,
+    collision_policy: CollisionPolicy,
+    history: Option<&HistoryStore>,
+) -> Result<Option<ItemReport>, RuntimeError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(RuntimeError::InspectSource {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Ok(None);
+    }
+    let Some(plan) = engine.plan(path)? else {
+        return Ok(None);
+    };
+    let mut report = RunReport {
+        source: path.to_path_buf(),
+        dry_run: false,
+        scanned: 1,
+        matched: 1,
+        moved: 0,
+        skipped: 0,
+        failed: 0,
+        items: Vec::with_capacity(1),
+        scan_errors: Vec::new(),
+    };
+    execute_and_record(&plan, collision_policy, history, &mut report)?;
+    Ok(report.items.pop())
 }
 
 fn execute_and_record(
@@ -637,11 +693,10 @@ fn validate_source(source: &Path) -> Result<(), RuntimeError> {
 }
 
 fn validate_no_recursive_loops(options: &OneShotOptions<'_>) -> Result<(), RuntimeError> {
-    if !options.recursive {
-        return Ok(());
-    }
     for rule in options.rules {
-        if rule.destination.starts_with(options.source) {
+        if rule.destination == options.source
+            || (options.recursive && rule.destination.starts_with(options.source))
+        {
             return Err(RuntimeError::RecursiveDestinationLoop {
                 rule_id: rule.id.clone(),
                 destination: rule.destination.clone(),
