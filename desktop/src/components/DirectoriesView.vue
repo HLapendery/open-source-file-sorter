@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { chooseDirectory } from "../api";
+import { stateLabel, t } from "../i18n";
 import type { AutomationStatus, Config, DirectoryConfig } from "../types";
 
 const props = defineProps<{
@@ -34,7 +35,7 @@ function uniqueId(prefix: string): string {
 
 function addDirectory() {
   const directory: DirectoryConfig = {
-    id: uniqueId("nouveau-repertoire"),
+    id: uniqueId(t("directories.newId")),
     path: "",
     enabled: true,
     mode: "once",
@@ -50,7 +51,7 @@ function addDirectory() {
 
 function removeDirectory() {
   if (!selected.value) return;
-  if (!window.confirm(`Supprimer la configuration « ${selected.value.id} » ? Aucun fichier ne sera supprimé.`)) return;
+  if (!window.confirm(t("directories.confirmDelete", { id: selected.value.id }))) return;
   props.config.directories.splice(selectedIndex.value, 1);
   emit("dirty");
 }
@@ -78,11 +79,11 @@ async function pickSource() {
   <section class="view-stack">
     <header class="view-heading">
       <div>
-        <p class="eyebrow">Configuration</p>
-        <h1>Répertoires</h1>
-        <p class="subtitle">Chaque source garde son mode, sa récursivité et son jeu de règles.</p>
+        <p class="eyebrow">{{ t("directories.eyebrow") }}</p>
+        <h1>{{ t("directories.title") }}</h1>
+        <p class="subtitle">{{ t("directories.subtitle") }}</p>
       </div>
-      <button class="primary" @click="addDirectory">Ajouter un répertoire</button>
+      <button class="primary" @click="addDirectory">{{ t("directories.add") }}</button>
     </header>
 
     <div v-if="config.directories.length" class="editor-layout">
@@ -96,66 +97,66 @@ async function pickSource() {
         >
           <span class="status-dot" :class="directory.enabled ? 'online' : 'muted'" />
           <span class="grow min-width-zero">
-            <strong class="truncate">{{ directory.id || "Sans identifiant" }}</strong>
-            <small class="truncate">{{ directory.path || "Chemin à définir" }}</small>
+            <strong class="truncate">{{ directory.id || t("directories.unnamed") }}</strong>
+            <small class="truncate">{{ directory.path || t("directories.pathMissing") }}</small>
           </span>
-          <span v-if="isActive(directory.id)" class="pulse" title="Automatisation active" />
+          <span v-if="isActive(directory.id)" class="pulse" :title="t('directories.activeAutomation')" />
         </button>
       </aside>
 
       <article v-if="selected" class="panel form-panel" @input="emit('dirty')" @change="emit('dirty')">
         <div class="panel-heading">
           <div>
-            <p class="eyebrow">Source {{ selectedIndex + 1 }}</p>
-            <h2>{{ selected.id || "Nouveau répertoire" }}</h2>
+            <p class="eyebrow">{{ t("directories.source", { count: selectedIndex + 1 }) }}</p>
+            <h2>{{ selected.id || t("directories.new") }}</h2>
           </div>
-          <button class="danger text-button" @click="removeDirectory">Supprimer</button>
+          <button class="danger text-button" @click="removeDirectory">{{ t("common.delete") }}</button>
         </div>
 
         <div class="form-grid two-columns">
           <label>
-            <span>Identifiant unique</span>
+            <span>{{ t("directories.uniqueId") }}</span>
             <input v-model.trim="selected.id" autocomplete="off" />
           </label>
           <label class="switch-row">
             <span>
-              <strong>Configuration active</strong>
-              <small>Incluse dans les exécutions</small>
+              <strong>{{ t("directories.active") }}</strong>
+              <small>{{ t("directories.activeHint") }}</small>
             </span>
             <input v-model="selected.enabled" type="checkbox" class="switch" />
           </label>
           <label class="full-width">
-            <span>Chemin source absolu</span>
+            <span>{{ t("directories.sourcePath") }}</span>
             <div class="path-picker">
               <input v-model.trim="selected.path" placeholder="/home/alice/Downloads" autocomplete="off" />
-              <button class="secondary" type="button" @click="pickSource">Parcourir</button>
+              <button class="secondary" type="button" @click="pickSource">{{ t("common.browse") }}</button>
             </div>
           </label>
           <label>
-            <span>Mode d’exécution</span>
+            <span>{{ t("directories.executionMode") }}</span>
             <select v-model="selected.mode">
-              <option value="once">Ponctuel</option>
-              <option value="watch">Surveillance</option>
-              <option value="scheduled">Planifié</option>
+              <option value="once">{{ t("directories.modeOnce") }}</option>
+              <option value="watch">{{ t("directories.modeWatch") }}</option>
+              <option value="scheduled">{{ t("directories.modeScheduled") }}</option>
             </select>
           </label>
           <label class="switch-row">
             <span>
-              <strong>Parcours récursif</strong>
-              <small>Inclure les sous-répertoires</small>
+              <strong>{{ t("directories.recursive") }}</strong>
+              <small>{{ t("directories.recursiveHint") }}</small>
             </span>
             <input v-model="selected.recursive" type="checkbox" class="switch" />
           </label>
 
           <template v-if="selected.mode === 'scheduled'">
             <label>
-              <span>Expression cron (6 champs)</span>
+              <span>{{ t("directories.cron") }}</span>
               <input v-model.trim="selected.schedule" placeholder="0 0 2 * * *" autocomplete="off" />
             </label>
             <label>
-              <span>Fuseau horaire</span>
+              <span>{{ t("directories.timezone") }}</span>
               <select v-model="selected.schedule_timezone">
-                <option value="local">Heure locale</option>
+                <option value="local">{{ t("directories.localTime") }}</option>
                 <option value="utc">UTC</option>
               </select>
             </label>
@@ -164,27 +165,27 @@ async function pickSource() {
 
         <div class="field-group">
           <div>
-            <strong>Règles associées</strong>
-            <p>La priorité globale décide de la première règle gagnante.</p>
+            <strong>{{ t("directories.associatedRules") }}</strong>
+            <p>{{ t("directories.priorityHint") }}</p>
           </div>
           <div v-if="config.rules.length" class="check-grid">
             <label v-for="rule in config.rules" :key="rule.id" class="check-card">
               <input v-model="selected.rules" type="checkbox" :value="rule.id" />
               <span>
                 <strong>{{ rule.id }}</strong>
-                <small>Priorité {{ rule.priority }}</small>
+                <small>{{ t("directories.priority", { count: rule.priority }) }}</small>
               </span>
             </label>
           </div>
-          <p v-else class="inline-warning">Créez au moins une règle avant d’enregistrer ce répertoire.</p>
+          <p v-else class="inline-warning">{{ t("directories.ruleRequired") }}</p>
         </div>
 
         <div v-if="selected.mode !== 'once'" class="automation-bar">
           <div>
-            <strong>Automatisation {{ statusFor(selected.id)?.state || "arrêtée" }}</strong>
-            <p v-if="dirty">Enregistrez la configuration avant de la démarrer.</p>
+            <strong>{{ t("directories.automation", { state: statusFor(selected.id)?.state ? stateLabel(statusFor(selected.id)!.state) : t("directories.stopped") }) }}</strong>
+            <p v-if="dirty">{{ t("directories.saveBeforeStart") }}</p>
             <p v-else-if="statusFor(selected.id)?.error" class="error-text">{{ statusFor(selected.id)?.error }}</p>
-            <p v-else>Le moteur Rust conserve le journal et les garanties de sécurité.</p>
+            <p v-else>{{ t("directories.engineSafety") }}</p>
           </div>
           <button
             v-if="!isActive(selected.id)"
@@ -192,10 +193,10 @@ async function pickSource() {
             :disabled="dirty || !selected.enabled"
             @click="emit('start', selected.id)"
           >
-            Démarrer
+            {{ t("common.start") }}
           </button>
           <button v-else class="secondary" :disabled="statusFor(selected.id)?.state === 'stopping'" @click="emit('stop', selected.id)">
-            Arrêter
+            {{ t("common.stop") }}
           </button>
         </div>
       </article>
@@ -203,9 +204,9 @@ async function pickSource() {
 
     <div v-else class="empty-state panel roomy">
       <div class="empty-icon">D</div>
-      <h2>Aucune source configurée</h2>
-      <p>Ajoutez le premier répertoire à analyser. Aucun fichier n’est touché lors de la configuration.</p>
-      <button class="primary" @click="addDirectory">Ajouter un répertoire</button>
+      <h2>{{ t("directories.noSources") }}</h2>
+      <p>{{ t("directories.noSourcesHint") }}</p>
+      <button class="primary" @click="addDirectory">{{ t("directories.add") }}</button>
     </div>
   </section>
 </template>

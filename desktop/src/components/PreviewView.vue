@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { api, errorMessage } from "../api";
+import { stateLabel, t } from "../i18n";
 import type { Config, RunReport } from "../types";
 
 const props = defineProps<{ config: Config; dirty: boolean }>();
@@ -29,7 +30,7 @@ async function preview() {
 async function execute() {
   if (!selectedId.value) return;
   const count = report.value?.items.length || 0;
-  if (!window.confirm(`Relancer l’analyse puis exécuter jusqu’à ${count} mouvement(s) avec le journal de sécurité ?`)) return;
+  if (!window.confirm(t("preview.confirmExecute", { count }))) return;
   busy.value = "execute";
   try {
     report.value = await api.execute(selectedId.value);
@@ -46,17 +47,17 @@ async function execute() {
   <section class="view-stack">
     <header class="view-heading">
       <div>
-        <p class="eyebrow">Contrôle avant action</p>
-        <h1>Prévisualisation</h1>
-        <p class="subtitle">Le dry-run utilise le même moteur Rust que l’exécution, sans mutation ni historique.</p>
+        <p class="eyebrow">{{ t("preview.eyebrow") }}</p>
+        <h1>{{ t("preview.title") }}</h1>
+        <p class="subtitle">{{ t("preview.subtitle") }}</p>
       </div>
     </header>
 
     <article class="panel preview-controls">
       <label class="grow">
-        <span>Répertoire configuré</span>
+        <span>{{ t("preview.configuredDirectory") }}</span>
         <select v-model="selectedId" @change="report = null">
-          <option disabled value="">Sélectionner une source</option>
+          <option disabled value="">{{ t("preview.selectSource") }}</option>
           <option v-for="directory in config.directories" :key="directory.id" :value="directory.id">
             {{ directory.id }} — {{ directory.path }}
           </option>
@@ -64,54 +65,54 @@ async function execute() {
       </label>
       <div class="button-row align-end">
         <button class="secondary" :disabled="!selectedId || dirty || busy !== null" @click="preview">
-          {{ busy === "preview" ? "Analyse…" : "Générer le plan" }}
+          {{ busy === "preview" ? t("preview.analyzing") : t("preview.generate") }}
         </button>
         <button class="primary" :disabled="!report || report.items.length === 0 || report.dry_run === false || busy !== null" @click="execute">
-          {{ busy === "execute" ? "Exécution…" : "Analyser et exécuter" }}
+          {{ busy === "execute" ? t("preview.executing") : t("preview.execute") }}
         </button>
       </div>
-      <p v-if="dirty" class="inline-warning full-width">Enregistrez la configuration avant l’analyse.</p>
+      <p v-if="dirty" class="inline-warning full-width">{{ t("preview.saveFirst") }}</p>
       <p v-else-if="selectedDirectory" class="path-note full-width">
-        {{ selectedDirectory.recursive ? "Analyse récursive" : "Premier niveau uniquement" }} ·
-        {{ selectedDirectory.rules.length }} règle(s) · l’exécution revalide la source
+        {{ selectedDirectory.recursive ? t("preview.recursive") : t("preview.firstLevel") }} ·
+        {{ t("preview.ruleCount", { count: selectedDirectory.rules.length }) }} · {{ t("preview.revalidate") }}
       </p>
     </article>
 
     <template v-if="report">
       <div class="metric-grid compact-metrics">
-        <article class="metric-card"><span>Analysés</span><strong>{{ report.scanned }}</strong></article>
-        <article class="metric-card"><span>Correspondances</span><strong>{{ report.matched }}</strong></article>
-        <article class="metric-card"><span>{{ report.dry_run ? "Planifiés" : "Déplacés" }}</span><strong>{{ report.dry_run ? report.items.length : report.moved }}</strong></article>
-        <article class="metric-card" :class="{ warning: report.failed > 0 }"><span>Échecs</span><strong>{{ report.failed + report.scan_errors.length }}</strong></article>
+        <article class="metric-card"><span>{{ t("preview.scanned") }}</span><strong>{{ report.scanned }}</strong></article>
+        <article class="metric-card"><span>{{ t("preview.matches") }}</span><strong>{{ report.matched }}</strong></article>
+        <article class="metric-card"><span>{{ report.dry_run ? t("preview.planned") : t("preview.moved") }}</span><strong>{{ report.dry_run ? report.items.length : report.moved }}</strong></article>
+        <article class="metric-card" :class="{ warning: report.failed > 0 }"><span>{{ t("preview.failures") }}</span><strong>{{ report.failed + report.scan_errors.length }}</strong></article>
       </div>
 
       <article class="panel table-panel">
         <div class="panel-heading">
           <div>
-            <p class="eyebrow">{{ report.dry_run ? "Plan proposé" : "Résultat" }}</p>
-            <h2>{{ report.items.length }} action(s)</h2>
+            <p class="eyebrow">{{ report.dry_run ? t("preview.proposedPlan") : t("preview.result") }}</p>
+            <h2>{{ t("preview.actions", { count: report.items.length }) }}</h2>
           </div>
-          <span class="pill" :class="report.dry_run ? '' : 'completed'">{{ report.dry_run ? "DRY-RUN" : "EXÉCUTÉ" }}</span>
+          <span class="pill" :class="report.dry_run ? '' : 'completed'">{{ report.dry_run ? "DRY-RUN" : t("preview.executed") }}</span>
         </div>
         <div v-if="report.items.length" class="table-scroll">
           <table>
-            <thead><tr><th>Source</th><th>Destination</th><th>Règle</th><th>État</th></tr></thead>
+            <thead><tr><th>{{ t("preview.source") }}</th><th>{{ t("preview.destination") }}</th><th>{{ t("preview.rule") }}</th><th>{{ t("preview.status") }}</th></tr></thead>
             <tbody>
               <tr v-for="(item, index) in report.items" :key="`${item.source}-${index}`">
                 <td><span class="file-name">{{ item.source.split(/[\\/]/).pop() }}</span><small>{{ item.source }}</small></td>
                 <td><span class="file-name">{{ item.destination.split(/[\\/]/).pop() }}</span><small>{{ item.destination }}</small></td>
                 <td><span class="pill">{{ item.rule_id }}</span></td>
-                <td><span class="pill" :class="item.status">{{ item.status }}</span><small v-if="item.error" class="error-text">{{ item.error }}</small></td>
+                <td><span class="pill" :class="item.status">{{ stateLabel(item.status) }}</span><small v-if="item.error" class="error-text">{{ item.error }}</small></td>
               </tr>
             </tbody>
           </table>
         </div>
         <div v-else class="empty-state compact">
-          <strong>Aucun fichier correspondant</strong>
-          <p>La source a été analysée sans produire de mouvement.</p>
+          <strong>{{ t("preview.noMatches") }}</strong>
+          <p>{{ t("preview.noMatchesHint") }}</p>
         </div>
         <div v-if="report.scan_errors.length" class="error-box">
-          <strong>Erreurs d’analyse</strong>
+          <strong>{{ t("preview.scanErrors") }}</strong>
           <p v-for="error in report.scan_errors" :key="error">{{ error }}</p>
         </div>
       </article>
@@ -119,8 +120,8 @@ async function execute() {
 
     <div v-else class="empty-state panel roomy">
       <div class="empty-icon">P</div>
-      <h2>Générez un plan avant toute action</h2>
-      <p>Les collisions, règles gagnantes et destinations seront visibles ici.</p>
+      <h2>{{ t("preview.emptyTitle") }}</h2>
+      <p>{{ t("preview.emptyHint") }}</p>
     </div>
   </section>
 </template>

@@ -6,6 +6,8 @@ import DirectoriesView from "./components/DirectoriesView.vue";
 import HistoryView from "./components/HistoryView.vue";
 import PreviewView from "./components/PreviewView.vue";
 import RulesView from "./components/RulesView.vue";
+import AppIcon from "./components/AppIcon.vue";
+import { locale, setLocale, t, type Locale } from "./i18n";
 import type { AutomationStatus, Config, HistoryEntry, ViewName } from "./types";
 
 const activeView = ref<ViewName>("dashboard");
@@ -23,17 +25,18 @@ const notice = ref("");
 let statusTimer: number | undefined;
 let messageTimer: number | undefined;
 
-const navItems: Array<{ id: ViewName; label: string; short: string }> = [
-  { id: "dashboard", label: "Tableau de bord", short: "TB" },
-  { id: "directories", label: "Répertoires", short: "D" },
-  { id: "rules", label: "Règles", short: "R" },
-  { id: "preview", label: "Prévisualisation", short: "P" },
-  { id: "history", label: "Historique", short: "H" },
+const navItems: Array<{ id: ViewName; label: Parameters<typeof t>[0]; icon: "overview" | "directories" | "rules" | "preview" | "history" }> = [
+  { id: "dashboard", label: "nav.dashboard", icon: "overview" },
+  { id: "directories", label: "nav.directories", icon: "directories" },
+  { id: "rules", label: "nav.rules", icon: "rules" },
+  { id: "preview", label: "nav.preview", icon: "preview" },
+  { id: "history", label: "nav.history", icon: "history" },
 ];
 
 const activeWorkers = computed(() =>
   automation.value.filter((entry) => entry.state === "running" || entry.state === "stopping"),
 );
+const activeTitle = computed(() => t(navItems.find((item) => item.id === activeView.value)?.label ?? "nav.dashboard"));
 
 async function loadSnapshot() {
   loading.value = true;
@@ -64,7 +67,7 @@ async function save() {
   try {
     config.value = structuredClone(await api.saveConfig(config.value));
     dirty.value = false;
-    showNotice("Configuration validée et enregistrée");
+    showNotice(t("notice.saved"));
   } catch (caught) {
     showError(errorMessage(caught));
   } finally {
@@ -86,7 +89,7 @@ async function refreshHistory() {
 async function startAutomation(directoryId: string) {
   try {
     automation.value = await api.startAutomation(directoryId);
-    showNotice(`Automatisation démarrée pour ${directoryId}`);
+    showNotice(t("notice.started", { id: directoryId }));
   } catch (caught) {
     showError(errorMessage(caught));
   }
@@ -95,7 +98,7 @@ async function startAutomation(directoryId: string) {
 async function stopAutomation(directoryId: string) {
   try {
     automation.value = await api.stopAutomation(directoryId);
-    showNotice(`Arrêt demandé pour ${directoryId}`);
+    showNotice(t("notice.stopping", { id: directoryId }));
   } catch (caught) {
     showError(errorMessage(caught));
   }
@@ -137,41 +140,55 @@ onBeforeUnmount(() => {
 <template>
   <div class="app-shell">
     <aside class="sidebar">
-      <div class="brand">
+      <div class="brand" :title="t('app.name')">
         <div class="brand-mark"><span /><span /><span /></div>
-        <div><strong>File Sorter</strong><small>open source</small></div>
       </div>
 
-      <nav aria-label="Navigation principale">
+      <nav :aria-label="t('app.name')">
         <button
           v-for="item in navItems"
           :key="item.id"
           :class="{ active: activeView === item.id }"
+          :title="t(item.label)"
+          :aria-label="t(item.label)"
           @click="activeView = item.id"
         >
-          <span class="nav-icon">{{ item.short }}</span>
-          <span>{{ item.label }}</span>
+          <span class="nav-icon"><AppIcon :name="item.icon" /></span>
+          <span class="nav-label">{{ t(item.label) }}</span>
           <span v-if="item.id === 'directories' && activeWorkers.length" class="nav-count">{{ activeWorkers.length }}</span>
         </button>
       </nav>
 
       <div class="sidebar-status">
-        <div class="engine-status"><span class="status-dot online" /> Moteur Rust prêt</div>
-        <p class="truncate" :title="configPath">{{ configPath || "Configuration locale" }}</p>
-        <p class="truncate" :title="databasePath">{{ databasePath || "Journal SQLite" }}</p>
+        <span class="status-dot online" />
+        <span class="sr-only">{{ t("topbar.engineReady") }}</span>
       </div>
     </aside>
 
     <main class="content-area">
-      <div v-if="loading" class="loading-screen"><div class="loader" /><strong>Chargement du moteur…</strong></div>
+      <div v-if="loading" class="loading-screen"><div class="loader" /><strong>{{ t("app.loading") }}</strong></div>
       <div v-else-if="!config" class="loading-screen error-screen">
-        <strong>Impossible d’initialiser l’application</strong><p>{{ error }}</p>
-        <button class="primary" @click="loadSnapshot">Réessayer</button>
+        <strong>{{ t("app.initError") }}</strong><p>{{ error }}</p>
+        <button class="primary" @click="loadSnapshot">{{ t("common.retry") }}</button>
       </div>
       <template v-else>
         <div class="topbar">
-          <div class="save-state"><span class="status-dot" :class="dirty ? 'warning-dot' : 'online'" />{{ dirty ? "Modifications non enregistrées" : "Configuration à jour" }}</div>
-          <button class="primary save-button" :disabled="!dirty || saving" @click="save">{{ saving ? "Validation…" : "Enregistrer" }}</button>
+          <div class="page-context">
+            <strong>{{ activeTitle }}</strong>
+            <span class="engine-status"><span class="status-dot online" />{{ t("topbar.engineReady") }}</span>
+          </div>
+          <div class="topbar-actions">
+            <div class="save-state"><span class="status-dot" :class="dirty ? 'warning-dot' : 'online'" />{{ dirty ? t("topbar.unsaved") : t("topbar.upToDate") }}</div>
+            <label class="language-picker">
+              <AppIcon name="language" />
+              <span class="sr-only">{{ t("topbar.language") }}</span>
+              <select :value="locale" :aria-label="t('topbar.language')" @change="setLocale(($event.target as HTMLSelectElement).value as Locale)">
+                <option value="en">EN</option>
+                <option value="fr">FR</option>
+              </select>
+            </label>
+            <button class="primary save-button" :disabled="!dirty || saving" @click="save">{{ saving ? t("topbar.saving") : t("topbar.save") }}</button>
+          </div>
         </div>
 
         <div class="view-container">
@@ -192,7 +209,7 @@ onBeforeUnmount(() => {
       </template>
     </main>
 
-    <div v-if="error && config" class="toast error-toast"><strong>Erreur</strong><span>{{ error }}</span><button @click="error = ''">×</button></div>
-    <div v-if="notice" class="toast notice-toast"><strong>OK</strong><span>{{ notice }}</span><button @click="notice = ''">×</button></div>
+    <div v-if="error && config" class="toast error-toast"><strong>{{ t("common.error") }}</strong><span>{{ error }}</span><button @click="error = ''">×</button></div>
+    <div v-if="notice" class="toast notice-toast"><strong>{{ t("common.success") }}</strong><span>{{ notice }}</span><button @click="notice = ''">×</button></div>
   </div>
 </template>

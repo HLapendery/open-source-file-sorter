@@ -23,7 +23,14 @@ Changelog and intends to use Semantic Versioning after the first release.
 - Tauri 2 and Vue 3 desktop interface backed by the existing Rust engine.
 - Desktop dashboard, directory/rule editing, dry-run preview, explicit
   execution, automation controls, and SQLite history.
+- English-first desktop localization with a persistent French/English selector
+  and locale-aware dates and operation states.
 - Rust desktop backend tests and Linux/macOS/Windows desktop compilation in CI.
+
+### Changed
+
+- Refreshed the desktop shell, navigation, cards, forms, and responsive layout
+  with a cleaner SaaS-style visual system.
 
 ### Known limitations
 

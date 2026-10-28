@@ -5,6 +5,11 @@ All matching, scanning, filesystem movement, history, and automation operations
 run in Rust through commands in `src-tauri`; the Vue application only presents
 state and collects user input.
 
+The interface starts in English. The language selector in the top bar switches
+all desktop copy and date formatting between English and French. The choice is
+stored locally for the current desktop user and does not alter the sorter TOML
+configuration.
+
 ## Development
 
 Install the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/),
