@@ -32,6 +32,8 @@ is recorded in SQLite.
 - a Tauri 2 + Vue 3 desktop interface backed entirely by the Rust engine;
 - dashboard, directory/rule editors, native directory selection, dry-run
   preview, explicit execution, automation controls, and history;
+- English desktop interface by default with a persistent French/English
+  language selector;
 - Linux, macOS, and Windows CLI and desktop compilation in CI.
 
 ## Desktop interface

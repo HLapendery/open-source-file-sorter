@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { api, chooseDirectory, errorMessage } from "../api";
+import { t } from "../i18n";
 import type { Config, PlannedMove, Rule } from "../types";
 import StringListInput from "./StringListInput.vue";
 
@@ -32,13 +33,13 @@ function uniqueId(prefix: string): string {
 
 function addRule() {
   const rule: Rule = {
-    id: uniqueId("nouvelle-regle"),
+    id: uniqueId(t("rules.newId")),
     enabled: true,
     priority: 10,
     destination: "",
     match: {
       operator: "all",
-      exact_filenames: ["exemple.txt"],
+      exact_filenames: [t("rules.exampleName")],
       filename_globs: [],
       filename_regexes: [],
       extensions: [],
@@ -52,7 +53,7 @@ function addRule() {
 
 function removeRule() {
   if (!selected.value) return;
-  if (!window.confirm(`Supprimer la règle « ${selected.value.id} » et ses associations ?`)) return;
+  if (!window.confirm(t("rules.confirmDelete", { id: selected.value.id }))) return;
   const id = selected.value.id;
   props.config.rules.splice(selectedIndex.value, 1);
   for (const directory of props.config.directories) {
@@ -100,11 +101,11 @@ async function pickDestination() {
   <section class="view-stack">
     <header class="view-heading">
       <div>
-        <p class="eyebrow">Moteur déterministe</p>
-        <h1>Règles de tri</h1>
-        <p class="subtitle">Priorité décroissante, puis ordre de déclaration. La première correspondance gagne.</p>
+        <p class="eyebrow">{{ t("rules.eyebrow") }}</p>
+        <h1>{{ t("rules.title") }}</h1>
+        <p class="subtitle">{{ t("rules.subtitle") }}</p>
       </div>
-      <button class="primary" @click="addRule">Ajouter une règle</button>
+      <button class="primary" @click="addRule">{{ t("rules.add") }}</button>
     </header>
 
     <div v-if="config.rules.length" class="editor-layout">
@@ -118,8 +119,8 @@ async function pickDestination() {
         >
           <span class="priority-badge">{{ rule.priority }}</span>
           <span class="grow min-width-zero">
-            <strong class="truncate">{{ rule.id || "Sans identifiant" }}</strong>
-            <small class="truncate">{{ rule.destination || "Destination à définir" }}</small>
+            <strong class="truncate">{{ rule.id || t("rules.unnamed") }}</strong>
+            <small class="truncate">{{ rule.destination || t("rules.destinationMissing") }}</small>
           </span>
           <span class="status-dot" :class="rule.enabled ? 'online' : 'muted'" />
         </button>
@@ -128,46 +129,46 @@ async function pickDestination() {
       <article v-if="selected" class="panel form-panel" @input="emit('dirty')" @change="emit('dirty')">
         <div class="panel-heading">
           <div>
-            <p class="eyebrow">Règle {{ selectedIndex + 1 }}</p>
-            <h2>{{ selected.id || "Nouvelle règle" }}</h2>
+            <p class="eyebrow">{{ t("rules.rule", { count: selectedIndex + 1 }) }}</p>
+            <h2>{{ selected.id || t("rules.new") }}</h2>
           </div>
-          <button class="danger text-button" @click="removeRule">Supprimer</button>
+          <button class="danger text-button" @click="removeRule">{{ t("common.delete") }}</button>
         </div>
 
         <div class="form-grid two-columns">
           <label>
-            <span>Identifiant unique</span>
+            <span>{{ t("rules.uniqueId") }}</span>
             <input v-model.trim="selected.id" autocomplete="off" @focus="rememberId" @change="replaceRuleReferences" />
           </label>
           <label>
-            <span>Priorité</span>
+            <span>{{ t("rules.priority") }}</span>
             <input v-model.number="selected.priority" type="number" />
           </label>
           <label class="full-width">
-            <span>Répertoire de destination absolu</span>
+            <span>{{ t("rules.destination") }}</span>
             <div class="path-picker">
               <input v-model.trim="selected.destination" placeholder="/home/alice/Documents" autocomplete="off" />
-              <button class="secondary" type="button" @click="pickDestination">Parcourir</button>
+              <button class="secondary" type="button" @click="pickDestination">{{ t("common.browse") }}</button>
             </div>
           </label>
           <label>
-            <span>Combinaison des groupes</span>
+            <span>{{ t("rules.combination") }}</span>
             <select v-model="selected.match.operator">
-              <option value="all">Tous les groupes (AND)</option>
-              <option value="any">Au moins un groupe (OR)</option>
+              <option value="all">{{ t("rules.all") }}</option>
+              <option value="any">{{ t("rules.any") }}</option>
             </select>
           </label>
           <label class="switch-row">
             <span>
-              <strong>Sensible à la casse</strong>
-              <small>Appliqué à toutes les conditions</small>
+              <strong>{{ t("rules.caseSensitive") }}</strong>
+              <small>{{ t("rules.caseSensitiveHint") }}</small>
             </span>
             <input v-model="selected.match.case_sensitive" type="checkbox" class="switch" />
           </label>
           <label class="switch-row full-width">
             <span>
-              <strong>Règle active</strong>
-              <small>Une règle désactivée n’est jamais compilée</small>
+              <strong>{{ t("rules.enabled") }}</strong>
+              <small>{{ t("rules.enabledHint") }}</small>
             </span>
             <input v-model="selected.enabled" type="checkbox" class="switch" />
           </label>
@@ -175,48 +176,48 @@ async function pickDestination() {
 
         <div class="condition-grid">
           <label>
-            <span>Noms exacts <small>un par ligne</small></span>
-            <StringListInput v-model="selected.match.exact_filenames" placeholder="rapport-final.pdf" />
+            <span>{{ t("rules.exactNames") }} <small>{{ t("rules.onePerLine") }}</small></span>
+            <StringListInput v-model="selected.match.exact_filenames" :placeholder="t('rules.exactPlaceholder')" />
           </label>
           <label>
-            <span>Globs <small>un par ligne</small></span>
-            <StringListInput v-model="selected.match.filename_globs" placeholder="facture-*.pdf" />
+            <span>{{ t("rules.globs") }} <small>{{ t("rules.onePerLine") }}</small></span>
+            <StringListInput v-model="selected.match.filename_globs" :placeholder="t('rules.globPlaceholder')" />
           </label>
           <label>
-            <span>Expressions régulières <small>une par ligne</small></span>
+            <span>{{ t("rules.regexes") }} <small>{{ t("rules.onePerLine") }}</small></span>
             <StringListInput v-model="selected.match.filename_regexes" placeholder="^invoice-\d+\.pdf$" />
           </label>
           <label>
-            <span>Extensions <small>une par ligne, sans point</small></span>
+            <span>{{ t("rules.extensions") }} <small>{{ t("rules.withoutDot") }}</small></span>
             <StringListInput v-model="selected.match.extensions" placeholder="pdf&#10;docx" />
           </label>
         </div>
 
         <div class="rule-tester">
           <div>
-            <strong>Tester l’ensemble des règles</strong>
-            <p>Le moteur Rust compile la configuration courante et applique les vraies priorités.</p>
+            <strong>{{ t("rules.testTitle") }}</strong>
+            <p>{{ t("rules.testHint") }}</p>
           </div>
           <div class="test-controls">
-            <input v-model.trim="testName" placeholder="nom-du-fichier.pdf" @keyup.enter="testRuleSet" />
+            <input v-model.trim="testName" :placeholder="t('rules.testPlaceholder')" @keyup.enter="testRuleSet" />
             <button class="secondary" :disabled="testing || !testName" @click="testRuleSet">
-              {{ testing ? "Test…" : "Tester" }}
+              {{ testing ? t("rules.testing") : t("rules.test") }}
             </button>
           </div>
           <p v-if="testError" class="error-text">{{ testError }}</p>
           <p v-else-if="testResult" class="success-text">
-            Correspond à <strong>{{ testResult.rule_id }}</strong> → {{ testResult.destination }}
+            {{ t("rules.match", { rule: testResult.rule_id, destination: testResult.destination }) }}
           </p>
-          <p v-else-if="!testing" class="muted-text">Aucune correspondance pour le dernier test.</p>
+          <p v-else-if="!testing" class="muted-text">{{ t("rules.noMatch") }}</p>
         </div>
       </article>
     </div>
 
     <div v-else class="empty-state panel roomy">
       <div class="empty-icon">R</div>
-      <h2>Aucune règle</h2>
-      <p>Créez une règle explicite ; le moteur refusera toute condition vide ou invalide.</p>
-      <button class="primary" @click="addRule">Créer la première règle</button>
+      <h2>{{ t("rules.noRules") }}</h2>
+      <p>{{ t("rules.noRulesHint") }}</p>
+      <button class="primary" @click="addRule">{{ t("rules.createFirst") }}</button>
     </div>
   </section>
 </template>
