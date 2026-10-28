@@ -4,9 +4,9 @@ A conservative, headless-first file organizer written in Rust. Rules are
 deterministic, existing files are never overwritten, and every real operation
 is recorded in SQLite.
 
-> **Project status:** Phase 4 headless automation. One-shot sorting, verified
-> cross-filesystem transfer, durable recovery, native watching, and cron
-> scheduling are usable. The desktop GUI is not implemented yet; see
+> **Project status:** Phase 5 desktop MVP. The headless CLI, recovery,
+> watchdog, scheduler, and the Tauri 2 desktop interface are usable from
+> source. Installers and signed packages remain Phase 6 work; see
 > [the roadmap](docs/roadmap.md).
 
 ## What works
@@ -29,7 +29,10 @@ is recorded in SQLite.
 - debounce, file stabilization, temporary-file exclusions, and reconciliation;
 - independent local/UTC cron schedules with overlap prevention;
 - graceful `SIGINT`/`SIGTERM` shutdown;
-- Linux, macOS, and Windows compilation in CI.
+- a Tauri 2 + Vue 3 desktop interface backed entirely by the Rust engine;
+- dashboard, directory/rule editors, native directory selection, dry-run
+  preview, explicit execution, automation controls, and history;
+- Linux, macOS, and Windows CLI and desktop compilation in CI.
 
 ## Installation with Docker Compose
 
@@ -104,9 +107,33 @@ The container runs as UID 1000. The mounted configuration, database, source,
 and destination must be accessible to that user. Always inspect a dry run
 before the first real execution.
 
+Compose remains the recommended simple setup: clone the repository, create the
+configuration as shown above, and run the commands through `docker compose`.
+The native desktop window is intentionally not placed inside Compose because it
+must use the host operating system's window manager, webview, and directory
+picker. It is an optional development surface until installers are introduced.
+
+## Desktop interface from source
+
+The desktop application requires Node.js 20, Rust 1.90, and the
+[Tauri 2 platform prerequisites](https://v2.tauri.app/start/prerequisites/).
+It uses the same configuration, runtime, journal, and recovery crates as the
+CLI; TypeScript performs no matching or filesystem mutations.
+
+~~~bash
+cd desktop
+npm ci
+npm run tauri dev
+~~~
+
+By default, configuration and SQLite history are stored in the platform's
+application config/data directories. Set `SORTER_CONFIG` and
+`SORTER_DATABASE` before startup to use explicit paths. The desktop MVP does
+not yet ship an installer or a signed package.
+
 ## Native development
 
-Rust 1.88 or newer is required.
+Rust 1.90 or newer is required.
 
 ~~~
 cargo fmt --all -- --check
@@ -164,6 +191,7 @@ cannot prove that an external writer has permanently closed a file.
 - [Filesystem safety](docs/filesystem-safety.md)
 - [Phase 3 implementation summary](docs/phase-3-summary.md)
 - [Phase 4 implementation summary](docs/phase-4-summary.md)
+- [Phase 5 implementation summary](docs/phase-5-summary.md)
 - [Development roadmap](docs/roadmap.md)
 - [Developer guide](docs/development.md)
 

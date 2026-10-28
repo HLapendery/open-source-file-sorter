@@ -2,8 +2,7 @@
 
 ## Scope and status
 
-This document records the architecture through the implemented Phase 4
-automation work. The desktop application remains a future phase.
+This document records the architecture through the Phase 5 desktop MVP.
 
 ## Workspace boundaries
 
@@ -13,6 +12,13 @@ sorter-cli
        -> sorter-core
        -> sorter-fs
        -> sorter-storage
+
+sorter-desktop (Tauri commands)
+  -> sorter-runtime
+  -> sorter-core
+  -> sorter-storage
+
+Vue 3 UI -> typed Tauri IPC -> sorter-desktop
 
 sorter-storage -> sorter-core, sorter-fs (shared serialized domain types)
 ~~~
@@ -25,9 +31,12 @@ sorter-storage -> sorter-core, sorter-fs (shared serialized domain types)
   scheduled, stabilization, reconciliation, and shutdown work.
 - `sorter-cli` translates commands and output formats. It contains no matching
   or movement logic.
+- `sorter-desktop` exposes narrow asynchronous Tauri commands. Blocking Rust
+  scans and movements run outside the UI thread.
+- `desktop/src` renders and edits state. It never matches or moves files.
 
-The future Tauri process will call these crates directly. TypeScript will only
-render state and invoke Rust commands.
+The CLI and desktop process call the same crates directly. There is no local
+HTTP service and no duplicated TypeScript domain implementation.
 
 ## Major decisions and trade-offs
 
@@ -106,12 +115,29 @@ TOML is readable and works well for declarative rules. Unknown fields are
 rejected to catch typos. `version = 1` is mandatory semantically, and unsupported
 versions fail closed. Future migrations belong in `sorter-storage`.
 
-### Headless-first delivery
+### Headless-first delivery and native desktop boundary
 
-The CLI is the first product surface. Tauri 2 and Vue 3 remain appropriate for
-the desktop phase because they reuse a native Rust backend and avoid shipping
-filesystem logic in JavaScript. They are deliberately absent from the current
-dependency graph.
+The CLI remains the primary product surface and is fully usable in headless
+environments. Tauri 2 provides a thin native window and Vue 3 provides the
+presentation layer. Commands accept configuration-shaped data, validate it in
+Rust, and call the existing runtime. Long-running calls use Tauri's blocking
+worker pool so the window remains responsive.
+
+Watch and scheduled workers are owned by a Rust automation manager. Each has a
+shutdown token and join handle; configuration cannot be saved while workers are
+active, and application shutdown requests every worker to stop before joining
+it. Preview is a real runtime dry run. Execution deliberately rescans and
+revalidates instead of trusting a stale frontend plan.
+
+Configuration and SQLite paths default to Tauri's per-platform application
+directories. Environment overrides allow the desktop process to share an
+explicit CLI configuration. Native directory selection is the only frontend
+capability beyond core IPC.
+
+The GUI is not containerized: a desktop window must integrate with the host's
+window manager, webview, and directory picker. Compose remains the simple
+headless installation path. Native installers, signing, and packaging are
+deferred to Phase 6.
 
 ## Risks
 
@@ -123,6 +149,10 @@ dependency graph.
   byte-for-byte verification; no portable userspace API can prevent a hostile
   writer in the final validation-to-unlink interval;
 - high-volume throughput must be measured before concurrency is introduced.
+- one-shot desktop scans currently return a complete report rather than
+  streaming incremental rows and cannot yet be cancelled mid-scan;
+- the native UI depends on the operating system webview and has not yet been
+  distributed as a signed installer.
 
 ## Phase summaries
 
@@ -156,3 +186,11 @@ stabilization, temporary-file exclusions, streaming reconciliation, local/UTC
 cron workers, global bounded execution, independent directory failure domains,
 and graceful signal-driven shutdown. Compose profiles run watch and schedule
 workers without adding a daemon or HTTP API.
+
+### Phase 5 — Desktop MVP
+
+Implemented the Tauri 2 shell, Vue 3 dashboard, directory and rule editors,
+Rust-backed filename testing, native path selection, dry-run preview, explicit
+one-shot execution, automation lifecycle controls, and SQLite history. Desktop
+backend tests exercise first-start initialization, non-mutating preview, and
+journaled execution. Cross-platform CI compiles both CLI and desktop targets.

@@ -20,9 +20,14 @@ Changelog and intends to use Semantic Versioning after the first release.
 - Streaming reconciliation for missed events and queue overflow.
 - Independent local/UTC cron workers with overlap prevention.
 - Graceful signal handling and Docker Compose automation profiles.
+- Tauri 2 and Vue 3 desktop interface backed by the existing Rust engine.
+- Desktop dashboard, directory/rule editing, dry-run preview, explicit
+  execution, automation controls, and SQLite history.
+- Rust desktop backend tests and Linux/macOS/Windows desktop compilation in CI.
 
 ### Known limitations
 
-- No watcher, scheduler runtime, desktop GUI, or benchmarks.
+- No signed installers, release packages, incremental desktop scan progress,
+  or benchmarks.
 - Durability remains subject to operating-system, filesystem, mount, and
   hardware guarantees documented in `docs/filesystem-safety.md`.
