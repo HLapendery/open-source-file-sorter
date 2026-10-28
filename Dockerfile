@@ -1,8 +1,9 @@
-FROM rust:1.88-bookworm AS builder
+FROM rust:1.90-bookworm AS builder
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY desktop/src-tauri ./desktop/src-tauri
 RUN cargo build --locked --release --bin sorter
 
 FROM debian:bookworm-slim

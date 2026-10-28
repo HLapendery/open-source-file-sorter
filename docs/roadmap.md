@@ -36,12 +36,18 @@ The implementation uses one synchronous worker per directory, a global
 execution gate, bounded native-event and stabilization queues, and streaming
 reconciliation. No background HTTP service or async runtime is required.
 
-## Phase 5 — Desktop
+## Phase 5 — Desktop MVP (implemented)
 
 - Tauri 2 shell with Vue 3 and TypeScript;
-- dashboard, directory/rule editors, preview, live execution, and history;
-- cancellable background commands and incremental result delivery;
+- dashboard, directory/rule editors, native path selection, preview,
+  execution, automation controls, and history;
+- blocking filesystem work isolated from the UI thread;
 - no business logic or filesystem mutation in TypeScript.
+
+One-shot scan reports are currently delivered after completion rather than as
+incremental rows. Cancellation for an active one-shot scan and richer live
+progress are follow-up hardening items; watch and scheduled workers already
+support graceful stop requests.
 
 ## Phase 6 — Release
 

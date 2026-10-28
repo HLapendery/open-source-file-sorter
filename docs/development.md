@@ -1,7 +1,7 @@
 # Developer guide
 
-The project uses Rust 1.88 and a Cargo workspace. Keep domain logic out of the
-CLI and, later, out of Tauri commands.
+The project uses Rust 1.90 and a Cargo workspace. Keep domain logic out of the
+CLI, Tauri commands, and TypeScript frontend.
 
 Development is pull-request based. Start from `main`, create a focused
 `feat/*`, `fix/*`, `docs/*`, or `chore/*` branch, and open a PR back to
@@ -13,6 +13,27 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo build --locked --release --bin sorter
+~~~
+
+The desktop frontend requires Node.js 20. After installing the native
+[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/):
+
+~~~bash
+cd desktop
+npm ci
+npm run build
+npm run tauri dev
+~~~
+
+On Linux, use the checked-in builder when WebKitGTK development packages are
+not installed on the host:
+
+~~~bash
+docker build -f desktop/Dockerfile.builder \
+  -t open-source-file-sorter:desktop-builder .
+docker run --rm -v "$PWD:/work" -w /work \
+  open-source-file-sorter:desktop-builder \
+  cargo test --workspace --all-targets
 ~~~
 
 Standalone Compose validation from this repository:

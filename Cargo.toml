@@ -5,6 +5,7 @@ members = [
     "crates/sorter-runtime",
     "crates/sorter-storage",
     "crates/sorter-cli",
+    "desktop/src-tauri",
 ]
 resolver = "2"
 
@@ -13,7 +14,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/HLapendery/open-source-file-sorter"
-rust-version = "1.88"
+rust-version = "1.90"
 
 [workspace.dependencies]
 anyhow = "1.0"
