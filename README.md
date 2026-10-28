@@ -34,6 +34,24 @@ is recorded in SQLite.
   preview, explicit execution, automation controls, and history;
 - Linux, macOS, and Windows CLI and desktop compilation in CI.
 
+## Desktop interface
+
+These screenshots show the current Vue 3 desktop interface with an isolated
+demonstration configuration. No personal files or local configuration are
+included.
+
+### Dashboard
+
+![Sorter's dashboard showing configured directories, rules, automation status, and recent operations](docs/screenshots/dashboard.png)
+
+### Rule editor
+
+![Sorter's rule editor showing matching conditions, priority, and destination settings](docs/screenshots/rules.png)
+
+### Dry-run preview
+
+![Sorter's dry-run preview showing planned file movements before execution](docs/screenshots/preview.png)
+
 ## Installation with Docker Compose
 
 Docker Engine with the Compose plugin, or Docker Desktop on macOS/Windows, is
